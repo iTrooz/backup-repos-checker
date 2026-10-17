@@ -1,3 +1,9 @@
+//! Inspect repository metadata and optional file headers, then render findings.
+
+/// CLI check names and execution flags.
+pub mod selection;
+
+use selection::Selection;
 use std::collections::BTreeMap;
 
 use anyhow::Result;
@@ -19,10 +25,12 @@ struct Repository {
     failure_samples: Vec<String>,
 }
 
+/// Repository findings and child folders sharing the same check selection.
 #[derive(Debug, Default)]
 pub struct Folder {
     repository: Option<Repository>,
     children: BTreeMap<String, Folder>,
+    checks: Selection,
 }
 
 #[derive(Clone, Copy)]
@@ -36,10 +44,18 @@ enum Status {
 }
 
 impl Folder {
+    /// Create ancestors while propagating the active checks to every tree node.
     fn at(&mut self, path: &str) -> &mut Self {
         let mut folder = self;
         for component in path.split('/').filter(|part| !part.is_empty()) {
-            folder = folder.children.entry(component.to_owned()).or_default();
+            let checks = folder.checks;
+            folder = folder
+                .children
+                .entry(component.to_owned())
+                .or_insert_with(|| Self {
+                    checks,
+                    ..Self::default()
+                });
         }
         folder
     }
@@ -48,20 +64,35 @@ impl Folder {
         self.repository.is_some() || self.children.values().any(Self::has_repository)
     }
 
+    /// Only enabled folder and content failures affect the health exit code.
     pub fn failed(&self) -> bool {
         self.repository
             .as_ref()
-            .is_some_and(|repo| !repo.exists || repo.header_failures > 0)
+            .is_some_and(|repo| (self.checks.folders && !repo.exists) || repo.header_failures > 0)
             || self.children.values().any(Self::failed)
     }
 
+    /// Keep skipped checks neutral rather than claiming they passed or failed.
     fn status(&self, cutoff: DateTime<Utc>) -> Status {
         match &self.repository {
-            Some(repo) if !repo.exists => Status::Missing,
+            Some(repo) if !repo.exists => {
+                if self.checks.folders {
+                    Status::Missing
+                } else {
+                    Status::Group
+                }
+            }
             Some(repo) if repo.header_failures > 0 => Status::InvalidHeaders,
-            Some(repo) if repo.newest.is_some_and(|modified| modified >= cutoff) => Status::Fresh,
-            Some(_) => Status::Stale,
-            None if !self.has_repository() => Status::Unconfigured,
+            Some(repo) if self.checks.age => {
+                if repo.newest.is_some_and(|modified| modified >= cutoff) {
+                    Status::Fresh
+                } else {
+                    Status::Stale
+                }
+            }
+            Some(repo) if self.checks.folders || repo.checked_files > 0 => Status::Fresh,
+            Some(_) => Status::Group,
+            None if self.checks.folders && !self.has_repository() => Status::Unconfigured,
             None => Status::Group,
         }
     }
@@ -97,6 +128,7 @@ impl Folder {
         issues
     }
 
+    /// Collect only enabled findings for reports and diagnostics.
     fn collect_issues(&self, path: &str, cutoff: DateTime<Utc>, issues: &mut Vec<String>) {
         match self.status(cutoff) {
             Status::Missing => issues.push(format!("[MISSING] {path}")),
@@ -106,7 +138,7 @@ impl Folder {
                     .as_ref()
                     .expect("repository with invalid headers");
                 issues.push(self.header_failure(path).expect("invalid headers"));
-                if repo.newest.is_none_or(|modified| modified < cutoff) {
+                if self.checks.age && repo.newest.is_none_or(|modified| modified < cutoff) {
                     issues.push(format!("[STALE] {path}"));
                 }
             }
@@ -144,6 +176,7 @@ impl Folder {
         output
     }
 
+    /// Render a collapsed repository line without details from disabled checks.
     fn render_into(
         &self,
         name: &str,
@@ -162,12 +195,17 @@ impl Folder {
             Status::Group => "",
         };
         let mut detail = match &self.repository {
-            Some(repo) if !repo.exists => "  [not found]".to_owned(),
-            Some(repo) => repo.newest.map_or_else(
+            Some(repo) if !repo.exists => if self.checks.folders {
+                "  [not found]"
+            } else {
+                "  [not checked]"
+            }
+            .to_owned(),
+            Some(repo) if self.checks.age => repo.newest.map_or_else(
                 || "  [no files]".to_owned(),
                 |timestamp| format!("  [latest: {}]", timestamp.to_rfc3339()),
             ),
-            None => String::new(),
+            _ => String::new(),
         };
         if let Some(repo) = &self.repository
             && repo.checked_files > 0
@@ -210,16 +248,21 @@ impl Folder {
     }
 }
 
+/// List every repository, downloading headers only when content is selected.
 pub async fn inspect(
     storage: &dyn Storage,
     repositories: &[RepositoryLocation<'_>],
+    checks: Selection,
 ) -> Result<Folder> {
-    let mut root = Folder::default();
+    let mut root = Folder {
+        checks,
+        ..Folder::default()
+    };
     for repository in repositories {
         root.at(repository.prefix).repository = Some(Repository::default());
     }
     let entries = storage.list().await?;
-    let mut checks = entries
+    let mut inspected = entries
         .map(|entry| async move {
             let entry = entry?;
             let repository = repositories.iter().find(|repo| {
@@ -228,7 +271,8 @@ pub async fn inspect(
             });
             let mut checked = false;
             let mut failure = None;
-            if !entry.path.ends_with('/')
+            if checks.content
+                && !entry.path.ends_with('/')
                 && let Some(repository) = repository
                 && let Some(header_check) = repository.header_check
             {
@@ -246,7 +290,7 @@ pub async fn inspect(
             Ok::<_, anyhow::Error>((entry, repository, checked, failure))
         })
         .buffered(CHECK_CONCURRENCY);
-    while let Some((entry, repository, checked, failure)) = checks.try_next().await? {
+    while let Some((entry, repository, checked, failure)) = inspected.try_next().await? {
         // A bare object named "repo" is not the folder "repo/".
         let marker = entry.path.ends_with('/');
         if let Some(repository) = repository {
@@ -265,13 +309,13 @@ pub async fn inspect(
                     repo.failure_samples.push(failure);
                 }
             }
-            if !marker {
+            if checks.age && !marker {
                 repo.newest = Some(
                     repo.newest
                         .map_or(entry.modified, |old| old.max(entry.modified)),
                 );
             }
-        } else {
+        } else if checks.folders {
             let folder = if marker {
                 entry.path.trim_end_matches('/')
             } else {
@@ -283,6 +327,7 @@ pub async fn inspect(
     Ok(root)
 }
 
+/// Freshness and folder-tree behavior under the default selection.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,6 +354,7 @@ mod tests {
         }
     }
 
+    /// Adapt freshness fixtures to the full default selection.
     async fn inspect(storage: &dyn Storage, prefixes: &[String]) -> Result<Folder> {
         let repositories: Vec<_> = prefixes
             .iter()
@@ -317,7 +363,7 @@ mod tests {
                 header_check: None,
             })
             .collect();
-        super::inspect(storage, &repositories).await
+        super::inspect(storage, &repositories, Selection::default()).await
     }
 
     #[tokio::test]
@@ -408,106 +454,9 @@ mod tests {
         }
         assert!(inspect(&Broken, &["repo".to_owned()]).await.is_err());
     }
-
-    struct HeaderStorage {
-        files: BTreeMap<String, Vec<u8>>,
-        reads: std::sync::atomic::AtomicUsize,
-        fail_reads: bool,
-    }
-
-    #[async_trait]
-    impl Storage for HeaderStorage {
-        async fn list(&self) -> Result<BoxStream<'_, Result<FileEntry>>> {
-            Ok(Box::pin(stream::iter(self.files.keys().map(|path| {
-                Ok(FileEntry {
-                    path: path.clone(),
-                    modified: Utc::now(),
-                })
-            }))))
-        }
-
-        async fn read_prefix(&self, path: &str, length: usize) -> Result<Vec<u8>> {
-            self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if self.fail_reads {
-                anyhow::bail!("access denied");
-            }
-            assert_eq!(length, crate::header::HEADER_BYTES);
-            Ok(self.files[path].iter().copied().take(length).collect())
-        }
-    }
-
-    #[tokio::test]
-    async fn header_checks_are_recursive_and_fail_closed() {
-        let storage = HeaderStorage {
-            files: [
-                ("repo/root.gz", vec![0x1f, 0x8b, 0x08]),
-                ("repo/deep/bad.gz", b"wrong".to_vec()),
-                ("repo/empty.gz", vec![]),
-                ("repo/unmatched.txt", b"text".to_vec()),
-                ("repo/marker/", vec![]),
-                ("other/file.gz", b"ignored".to_vec()),
-            ]
-            .into_iter()
-            .map(|(path, bytes)| (path.to_owned(), bytes))
-            .collect(),
-            reads: 0.into(),
-            fail_reads: false,
-        };
-        let header_check =
-            toml::from_str("[[rules]]\nglob = '**/*.gz'\npattern = '^\\x1f\\x8b\\x08'").unwrap();
-        let repositories = [RepositoryLocation {
-            prefix: "repo",
-            header_check: Some(&header_check),
-        }];
-        let tree = super::inspect(&storage, &repositories).await.unwrap();
-        assert!(tree.failed());
-        assert_eq!(storage.reads.load(std::sync::atomic::Ordering::SeqCst), 3);
-        let rendered = tree.render("s3://test", Utc::now(), 7, true);
-        assert!(rendered.contains("\x1b[31mrepo"));
-        assert!(rendered.contains("[header failures: 3/4]"));
-        assert!(!rendered.contains("bad.gz"));
-        let issues = tree.issues("s3://test", Utc::now(), 7).join("\n");
-        assert!(issues.contains("[HEADER CHECK FAILED] s3://test/repo"));
-        assert!(issues.contains("deep/bad.gz"));
-        assert!(issues.contains("no matching header rule"));
-        assert!(!issues.contains("root.gz"));
-        assert!(!issues.contains("[STALE]"));
-    }
-
-    #[tokio::test]
-    async fn checks_every_file_but_bounds_failure_details() {
-        let storage = HeaderStorage {
-            files: (0..27)
-                .map(|i| (format!("deep/file{i}"), b"bad".to_vec()))
-                .collect(),
-            reads: 0.into(),
-            fail_reads: false,
-        };
-        let header_check = toml::from_str("[[rules]]\nglob = '**'\npattern = '^GOOD'").unwrap();
-        let repositories = [RepositoryLocation {
-            prefix: "",
-            header_check: Some(&header_check),
-        }];
-        let tree = super::inspect(&storage, &repositories).await.unwrap();
-        assert_eq!(storage.reads.load(std::sync::atomic::Ordering::SeqCst), 27);
-        let repo = tree.repository.as_ref().unwrap();
-        assert_eq!(repo.header_failures, 27);
-        assert_eq!(repo.failure_samples.len(), MAX_FAILURE_SAMPLES);
-        assert!(tree.issues("s3://test", Utc::now(), 7)[0].contains("additional failures omitted"));
-    }
-
-    #[tokio::test]
-    async fn header_access_failures_are_execution_errors() {
-        let storage = HeaderStorage {
-            files: [("repo/file".to_owned(), vec![])].into(),
-            reads: 0.into(),
-            fail_reads: true,
-        };
-        let header_check = toml::from_str("[[rules]]\nglob = '**'\npattern = '^GOOD'").unwrap();
-        let repositories = [RepositoryLocation {
-            prefix: "repo",
-            header_check: Some(&header_check),
-        }];
-        assert!(super::inspect(&storage, &repositories).await.is_err());
-    }
 }
+
+/// Content-check tests kept separate to keep production modules small.
+#[cfg(test)]
+#[path = "check/header_tests.rs"]
+mod header_tests;

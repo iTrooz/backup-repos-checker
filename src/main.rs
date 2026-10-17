@@ -1,3 +1,5 @@
+//! CLI entry point for selected checks and complete email reports.
+
 mod check;
 mod config;
 mod header;
@@ -10,6 +12,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use check::selection::{Kind, Selection};
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 
@@ -23,7 +26,16 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Display configured repositories and unconfigured folders using ./config.toml.
-    Check,
+    Check {
+        /// Comma-separated checks to run: folders, age, content.
+        #[arg(
+            long,
+            value_enum,
+            value_delimiter = ',',
+            default_value = "folders,age,content"
+        )]
+        checks: Vec<Kind>,
+    },
     /// Email red and yellow entries; requires an [email] section in config.toml.
     Report {
         /// Print the email without connecting to SMTP or sending it.
@@ -45,7 +57,12 @@ async fn main() -> ExitCode {
     }
 }
 
+/// Run the selected checks, keeping reports on the full default selection.
 async fn run(cli: Cli) -> Result<bool> {
+    let checks = match &cli.command {
+        Command::Check { checks } => Selection::from_kinds(checks),
+        Command::Report { .. } => Selection::default(),
+    };
     let text = std::fs::read_to_string("config.toml").context("cannot read ./config.toml")?;
     let config = config::Config::parse(&text)?;
     let max_age_days = config.checks.age.max_age_days;
@@ -62,7 +79,7 @@ async fn run(cli: Cli) -> Result<bool> {
     let mut trees = Vec::new();
     for (bucket, prefixes) in config.buckets()? {
         let storage = storage::S3Storage::new(&config, &bucket)?;
-        let tree = check::inspect(&storage, &prefixes)
+        let tree = check::inspect(&storage, &prefixes, checks)
             .await
             .with_context(|| format!("cannot check s3://{bucket}"))?;
         trees.push((bucket, tree));
@@ -71,7 +88,7 @@ async fn run(cli: Cli) -> Result<bool> {
     let now = Utc::now();
     let failed = trees.iter().any(|(_, tree)| tree.failed());
     match cli.command {
-        Command::Check => {
+        Command::Check { .. } => {
             let color = io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
             let mut stdout = io::stdout().lock();
             for (bucket, tree) in trees {

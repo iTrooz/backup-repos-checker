@@ -308,3 +308,83 @@ fn overlapping_repositories_exit_two() {
     );
     assert!(output.stdout.is_empty());
 }
+
+/// Folder-only checks neither assess timestamps nor download configured headers.
+#[test]
+fn folders_only_skips_age_and_content() {
+    let output = with_listing(
+        "<Contents><Key>repo/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents><Contents><Key>untracked/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents>",
+        &["check", "--checks", "folders"],
+        HEADER_RULES,
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("untracked"));
+    assert!(!stdout.contains("latest:"));
+    assert!(!stdout.contains("header failures"));
+    assert!(output.stderr.is_empty());
+}
+
+/// Age-only checks hide unconfigured folders and skip content reads.
+#[test]
+fn age_only_skips_folders_and_content() {
+    let output = with_listing(
+        "<Contents><Key>repo/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents><Contents><Key>untracked/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents>",
+        &["check", "--checks", "age"],
+        HEADER_RULES,
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("latest:"));
+    assert!(!stdout.contains("untracked"));
+    assert!(!stdout.contains("header failures"));
+}
+
+/// Selected content checks still download and validate file headers.
+#[test]
+fn content_selection_preserves_header_failures() {
+    for checks in [
+        "content",
+        "folders,content",
+        "folders,age,content",
+        "content,content",
+    ] {
+        let output = check_header(206, b"WRONG", &["check", "--checks", checks], "");
+        assert_eq!(output.status.code(), Some(1), "{checks}: {output:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("header failures: 1/1"));
+        assert_eq!(stdout.contains("latest:"), checks.contains("age"));
+    }
+}
+
+/// Only selecting folder validation makes a missing repository exit nonzero.
+#[test]
+fn missing_repository_exit_depends_on_folder_selection() {
+    for (checks, expected) in [
+        ("age", 0),
+        ("content", 0),
+        ("age,content", 0),
+        ("folders", 1),
+        ("folders,age", 1),
+    ] {
+        let output = with_listing("", &["check", "--checks", checks], "");
+        assert_eq!(output.status.code(), Some(expected), "{checks}: {output:?}");
+    }
+}
+
+/// Reject unknown and empty names before reading configuration or contacting S3.
+#[test]
+fn invalid_check_names_are_usage_errors() {
+    for checks in ["", "unknown", "folders,", "age,unknown"] {
+        let output = run_args("", &["check", "--checks", checks]);
+        assert_eq!(output.status.code(), Some(2), "{checks}: {output:?}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains("invalid value") || stderr.contains("a value is required"),
+            "{checks:?}: {stderr}"
+        );
+        assert!(!stderr.contains("config.toml"));
+    }
+    let output = run_args("", &["check", "--checks"]);
+    assert_eq!(output.status.code(), Some(2));
+}
