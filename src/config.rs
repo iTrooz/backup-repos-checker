@@ -10,8 +10,21 @@ pub struct Config {
     pub s3_region: String,
     #[serde(default = "default_max_age")]
     pub max_age_days: u32,
-    pub repositories: Vec<String>,
+    pub repositories: Vec<RepositoryConfig>,
     pub email: Option<crate::report::EmailConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepositoryConfig {
+    pub uri: String,
+    pub header_check: Option<crate::header::HeaderCheck>,
+}
+
+#[derive(Clone, Copy)]
+pub struct RepositoryLocation<'a> {
+    pub prefix: &'a str,
+    pub header_check: Option<&'a crate::header::HeaderCheck>,
 }
 
 fn default_max_age() -> u32 {
@@ -40,9 +53,10 @@ impl Config {
     }
 
     /// Bucket names mapped to normalized repository prefixes (empty means bucket root).
-    pub fn buckets(&self) -> Result<BTreeMap<String, Vec<String>>> {
-        let mut buckets: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for repository in &self.repositories {
+    pub fn buckets(&self) -> Result<BTreeMap<String, Vec<RepositoryLocation<'_>>>> {
+        let mut buckets: BTreeMap<String, Vec<RepositoryLocation<'_>>> = BTreeMap::new();
+        for config in &self.repositories {
+            let repository = &config.uri;
             let Some(rest) = repository.strip_prefix("s3://") else {
                 bail!("repository must start with s3://: {repository}");
             };
@@ -64,12 +78,16 @@ impl Config {
             );
             let prefixes = buckets.entry(bucket.to_owned()).or_default();
             for existing in prefixes.iter() {
+                let existing = existing.prefix;
                 ensure!(
                     !contains(existing, prefix) && !contains(prefix, existing),
                     "duplicate or overlapping repositories: s3://{bucket}/{existing} and {repository}"
                 );
             }
-            prefixes.push(prefix.to_owned());
+            prefixes.push(RepositoryLocation {
+                prefix,
+                header_check: config.header_check.as_ref(),
+            });
         }
         Ok(buckets)
     }
@@ -88,8 +106,13 @@ mod tests {
     use super::*;
 
     fn config(repositories: &str) -> Result<Config> {
+        let repositories = repositories
+            .split(',')
+            .map(|uri| format!("[[repositories]]\nuri = {}", uri.trim()))
+            .collect::<Vec<_>>()
+            .join("\n");
         Config::parse(&format!(
-            "s3_endpoint = 'https://example.com'\ns3_region = 'test'\nrepositories = [{repositories}]"
+            "s3_endpoint = 'https://example.com'\ns3_region = 'test'\n{repositories}"
         ))
     }
 
@@ -123,5 +146,32 @@ mod tests {
         ] {
             assert!(config(&format!("'{repo}'")).is_err());
         }
+    }
+
+    #[test]
+    fn example_configuration_is_valid() {
+        Config::parse(include_str!("../config.example.toml")).unwrap();
+    }
+
+    #[test]
+    fn header_rules_are_validated_when_loading_config() {
+        let base = "s3_endpoint = 'https://example.com'\ns3_region = 'test'\n[[repositories]]\nuri = 's3://bucket/repo'\n";
+        for header in [
+            "[repositories.header_check]\nrules = []",
+            "[[repositories.header_check.rules]]\nglob = '**'\npattern = '('",
+            "[[repositories.header_check.rules]]\nglob = '['\npattern = '^x'",
+            "[repositories.header_check]\nread_bytes = 64\n[[repositories.header_check.rules]]\nglob = '**'\npattern = '^x'",
+        ] {
+            assert!(
+                Config::parse(&format!("{base}{header}")).is_err(),
+                "{header}"
+            );
+        }
+        assert!(
+            Config::parse(&format!(
+                "{base}[[repositories.header_check.rules]]\nglob = '**'\npattern = '^\\xff'"
+            ))
+            .is_ok()
+        );
     }
 }

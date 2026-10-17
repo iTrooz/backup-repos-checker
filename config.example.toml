@@ -2,11 +2,25 @@ s3_endpoint = "https://s3.example.com"
 s3_region = "us-east-1"
 max_age_days = 7
 
-repositories = [
-  "s3://bucket-one/backups/server-a",
-  "s3://bucket-one/backups/server-b",
-  "s3://bucket-two/database",
-]
+[[repositories]]
+uri = "s3://bucket-one/backups/server-a"
+
+[[repositories]]
+uri = "s3://bucket-one/backups/server-b"
+
+[[repositories]]
+uri = "s3://bucket-two/database"
+
+# Optional: validate every file's first 64 bytes, recursively.
+# The first matching rule wins; files without a matching rule fail.
+# Uncomment only if these patterns describe the actual repository format.
+# [[repositories.header_check.rules]]
+# glob = "**/*.gz"
+# pattern = '^\x1f\x8b\x08'
+#
+# [[repositories.header_check.rules]]
+# glob = "**/*.custom"
+# pattern = '^BACKUP v[12]\x00'
 
 # Required only for the report subcommand.
 [email]

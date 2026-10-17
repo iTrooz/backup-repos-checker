@@ -1,7 +1,8 @@
+mod check;
 mod config;
+mod header;
 mod report;
 mod storage;
-mod view;
 
 use std::{
     io::{self, IsTerminal, Write},
@@ -22,7 +23,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Display configured repositories and unconfigured folders using ./config.toml.
-    View,
+    Check,
     /// Email red and yellow entries; requires an [email] section in config.toml.
     Report {
         /// Print the email without connecting to SMTP or sending it.
@@ -60,16 +61,16 @@ async fn run(cli: Cli) -> Result<bool> {
     let mut trees = Vec::new();
     for (bucket, prefixes) in config.buckets()? {
         let storage = storage::S3Storage::new(&config, &bucket)?;
-        let tree = view::inspect(&storage, &prefixes)
+        let tree = check::inspect(&storage, &prefixes)
             .await
-            .with_context(|| format!("cannot list s3://{bucket}"))?;
+            .with_context(|| format!("cannot check s3://{bucket}"))?;
         trees.push((bucket, tree));
     }
     // Only render or send after every listing succeeds: never report partial results.
     let now = Utc::now();
-    let missing = trees.iter().any(|(_, tree)| tree.missing());
+    let failed = trees.iter().any(|(_, tree)| tree.failed());
     match cli.command {
-        Command::View => {
+        Command::Check => {
             let color = io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
             let mut stdout = io::stdout().lock();
             for (bucket, tree) in trees {
@@ -78,6 +79,9 @@ async fn run(cli: Cli) -> Result<bool> {
                     "{}",
                     tree.render(&format!("s3://{bucket}"), now, config.max_age_days, color)
                 )?;
+                for diagnostic in tree.header_diagnostics(&format!("s3://{bucket}")) {
+                    eprintln!("{diagnostic}");
+                }
             }
         }
         Command::Report { dry_run } => {
@@ -108,5 +112,5 @@ async fn run(cli: Cli) -> Result<bool> {
             }
         }
     }
-    Ok(missing)
+    Ok(failed)
 }

@@ -5,7 +5,7 @@ use std::{
 };
 
 fn run(config: &str) -> Output {
-    run_args(config, &["view"])
+    run_args(config, &["check"])
 }
 
 fn run_args(config: &str, args: &[&str]) -> Output {
@@ -27,40 +27,130 @@ fn run_args(config: &str, args: &[&str]) -> Output {
         .unwrap()
 }
 
-fn view_with_listing(contents: &str) -> Output {
-    with_listing(contents, &["view"], "")
+fn check_with_listing(contents: &str) -> Output {
+    with_listing(contents, &["check"], "")
 }
 
 fn with_listing(contents: &str, args: &[&str], extra_config: &str) -> Output {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let body =
         format!("<ListBucketResult><IsTruncated>false</IsTruncated>{contents}</ListBucketResult>");
+    with_s3_responses(vec![(200, body.into_bytes())], args, extra_config)
+}
+
+fn with_s3_responses(responses: Vec<(u16, Vec<u8>)>, args: &[&str], extra_config: &str) -> Output {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let server = std::thread::spawn(move || {
-        let (mut socket, _) = listener.accept().unwrap();
-        socket
-            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
-            .unwrap();
-        let mut request = Vec::new();
-        let mut buffer = [0; 4096];
-        while !request.windows(4).any(|part| part == b"\r\n\r\n") {
-            let count = socket.read(&mut buffer).unwrap();
-            assert!(count > 0);
-            request.extend_from_slice(&buffer[..count]);
-        }
-        write!(socket,
-            "HTTP/1.1 200 OK\r\nContent-Type: application/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        for (index, (status, body)) in responses.into_iter().enumerate() {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 4096];
+            while !request.windows(4).any(|part| part == b"\r\n\r\n") {
+                let count = socket.read(&mut buffer).unwrap();
+                assert!(count > 0);
+                request.extend_from_slice(&buffer[..count]);
+            }
+            if index > 0 {
+                assert!(
+                    String::from_utf8_lossy(&request)
+                        .to_ascii_lowercase()
+                        .contains("range: bytes=0-63")
+                );
+            }
+            write!(socket,
+            "HTTP/1.1 {status} Response\r\nContent-Type: application/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             body.len(),
         ).unwrap();
+            socket.write_all(&body).unwrap();
+        }
     });
     let output = run_args(
         &format!(
-            "s3_endpoint = '{endpoint}'\ns3_region = 'us-east-1'\nrepositories = ['s3://test-bucket/repo']\n{extra_config}"
+            "s3_endpoint = '{endpoint}'\ns3_region = 'us-east-1'\n[[repositories]]\nuri = 's3://test-bucket/repo'\n{extra_config}"
         ),
         args,
     );
     server.join().unwrap();
     output
+}
+
+const HEADER_RULES: &str = "[[repositories.header_check.rules]]\nglob = '**'\npattern = '^MAGIC'";
+
+fn check_header(status: u16, bytes: &[u8], args: &[&str], extra: &str) -> Output {
+    let listing = format!(
+        "<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>repo/deep/file</Key><LastModified>{}</LastModified></Contents></ListBucketResult>",
+        chrono::Utc::now().to_rfc3339(),
+    );
+    with_s3_responses(
+        vec![(200, listing.into_bytes()), (status, bytes.to_vec())],
+        args,
+        &format!("{HEADER_RULES}\n{extra}"),
+    )
+}
+
+#[test]
+fn check_accepts_valid_headers_and_rejects_invalid_headers() {
+    let output = check_header(206, b"MAGIC123", &["check"], "");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("header failures: 0/1")
+    );
+    let output = check_header(206, b"WRONG", &["check"], "");
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("header failures: 1/1")
+    );
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("deep/file")
+    );
+}
+
+#[test]
+fn header_failures_appear_in_email_preview() {
+    let output = check_header(206, b"WRONG", &["report", "--dry-run"], EMAIL);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("[HEADER CHECK FAILED] s3://test-bucket/repo"));
+    assert!(stdout.contains("deep/file"));
+}
+
+#[test]
+fn header_access_errors_exit_two_but_empty_files_exit_one() {
+    let output = check_header(
+        403,
+        b"<Error><Code>AccessDenied</Code></Error>",
+        &["check"],
+        "",
+    );
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(output.stdout.is_empty());
+    let output = check_header(
+        416,
+        b"<Error><Code>InvalidRange</Code></Error>",
+        &["check"],
+        "",
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+}
+
+#[test]
+fn view_has_been_replaced_by_check() {
+    let output = run_args("", &["view"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("unrecognized subcommand")
+    );
 }
 
 const EMAIL: &str = "[email]\nsmtp_host = '127.0.0.1'\nsmtp_port = 1\nfrom = 'backups@example.com'\nto = ['ops@example.com']";
@@ -110,7 +200,7 @@ fn healthy_report_skips_smtp() {
 #[test]
 fn report_requires_email_configuration() {
     let output = run_args(
-        "s3_endpoint = 'https://example.com'\ns3_region = 'us-east-1'\nrepositories = ['s3://bucket/repo']",
+        "s3_endpoint = 'https://example.com'\ns3_region = 'us-east-1'\n[[repositories]]\nuri = 's3://bucket/repo'",
         &["report", "--dry-run"],
     );
     assert_eq!(output.status.code(), Some(2), "{output:?}");
@@ -155,7 +245,7 @@ fn smtp_without_required_starttls_fails_without_sending() {
 
 #[test]
 fn stale_and_unconfigured_folders_exit_successfully() {
-    let output = view_with_listing(
+    let output = check_with_listing(
         "<Contents><Key>repo/deep/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents><Contents><Key>untracked/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents>",
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
@@ -168,7 +258,7 @@ fn stale_and_unconfigured_folders_exit_successfully() {
 
 #[test]
 fn missing_repositories_exit_one() {
-    let output = view_with_listing("");
+    let output = check_with_listing("");
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     assert!(
         String::from_utf8(output.stdout)
@@ -180,7 +270,7 @@ fn missing_repositories_exit_one() {
 #[test]
 fn overlapping_repositories_exit_two() {
     let output = run(
-        "s3_endpoint = 'https://example.com'\ns3_region = 'us-east-1'\nrepositories = ['s3://bucket/repo', 's3://bucket/repo/child']",
+        "s3_endpoint = 'https://example.com'\ns3_region = 'us-east-1'\n[[repositories]]\nuri = 's3://bucket/repo'\n[[repositories]]\nuri = 's3://bucket/repo/child'",
     );
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     assert!(

@@ -7,6 +7,7 @@ use aws_sdk_s3::{
 use chrono::{DateTime, Utc};
 use futures::stream::BoxStream;
 use futures::{StreamExt, stream};
+use tokio::io::AsyncReadExt;
 
 use crate::config::Config;
 
@@ -21,6 +22,8 @@ pub struct FileEntry {
 #[async_trait]
 pub trait Storage: Send + Sync {
     async fn list(&self) -> Result<BoxStream<'_, Result<FileEntry>>>;
+    /// Return at most `length` leading bytes; empty files return an empty vector.
+    async fn read_prefix(&self, path: &str, length: usize) -> Result<Vec<u8>>;
 }
 
 pub struct S3Storage {
@@ -61,6 +64,41 @@ impl S3Storage {
 
 #[async_trait]
 impl Storage for S3Storage {
+    async fn read_prefix(&self, path: &str, length: usize) -> Result<Vec<u8>> {
+        if length == 0 {
+            return Ok(Vec::new());
+        }
+        let response = self
+            .client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(path)
+            .range(format!("bytes=0-{}", length - 1))
+            .send()
+            .await;
+        let response = match response {
+            Ok(response) => response,
+            // A range starting at byte zero is unsatisfiable only for an empty object.
+            Err(error)
+                if error
+                    .raw_response()
+                    .is_some_and(|response| response.status().as_u16() == 416) =>
+            {
+                return Ok(Vec::new());
+            }
+            Err(error) => return Err(error).context("S3 GetObject failed"),
+        };
+        let mut bytes = Vec::with_capacity(length);
+        response
+            .body
+            .into_async_read()
+            .take(length as u64)
+            .read_to_end(&mut bytes)
+            .await
+            .context("cannot read S3 response body")?;
+        Ok(bytes)
+    }
+
     async fn list(&self) -> Result<BoxStream<'_, Result<FileEntry>>> {
         // Retain raw S3 keys: normalizing paths would lose directory markers.
         let pages = stream::try_unfold(Some(None), move |state| async move {
@@ -123,11 +161,33 @@ mod tests {
     };
 
     async fn mock_s3(pages: Vec<String>) -> (S3Storage, tokio::task::JoinHandle<Vec<String>>) {
+        mock_responses(
+            pages
+                .into_iter()
+                .map(|page| response("200 OK", page.as_bytes()))
+                .collect(),
+        )
+        .await
+    }
+
+    fn response(status: &str, body: &[u8]) -> Vec<u8> {
+        let mut response = format!(
+            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len(),
+        )
+        .into_bytes();
+        response.extend_from_slice(body);
+        response
+    }
+
+    async fn mock_responses(
+        responses: Vec<Vec<u8>>,
+    ) -> (S3Storage, tokio::task::JoinHandle<Vec<String>>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move {
             let mut requests = Vec::new();
-            for page in pages {
+            for response in responses {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let mut request = Vec::new();
                 let mut buffer = [0; 4096];
@@ -137,11 +197,7 @@ mod tests {
                     request.extend_from_slice(&buffer[..count]);
                 }
                 requests.push(String::from_utf8(request).unwrap());
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{page}",
-                    page.len(),
-                );
-                socket.write_all(response.as_bytes()).await.unwrap();
+                socket.write_all(&response).await.unwrap();
             }
             requests
         });
@@ -159,6 +215,54 @@ mod tests {
             },
             server,
         )
+    }
+
+    #[tokio::test]
+    async fn range_reads_preserve_binary_bytes_and_bound_ignored_ranges() {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let binary = [0xff, 0, b'\n', 0x80];
+            let (storage, server) = mock_responses(vec![
+                response("206 Partial Content", &binary),
+                response("200 OK", &[42; 128]),
+            ])
+            .await;
+            assert_eq!(
+                storage.read_prefix("repo/deep/file", 64).await.unwrap(),
+                binary
+            );
+            assert_eq!(
+                storage.read_prefix("repo/other", 64).await.unwrap(),
+                vec![42; 64]
+            );
+            let requests = server.await.unwrap();
+            assert!(requests[0].contains("/test-bucket/repo/deep/file"));
+            assert!(
+                requests
+                    .iter()
+                    .all(|request| request.to_ascii_lowercase().contains("range: bytes=0-63"))
+            );
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn empty_objects_are_empty_but_access_errors_propagate() {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let (storage, server) = mock_responses(vec![
+                response(
+                    "416 Range Not Satisfiable",
+                    b"<Error><Code>InvalidRange</Code></Error>",
+                ),
+                response("403 Forbidden", b"<Error><Code>AccessDenied</Code></Error>"),
+            ])
+            .await;
+            assert!(storage.read_prefix("empty", 64).await.unwrap().is_empty());
+            assert!(storage.read_prefix("private", 64).await.is_err());
+            assert_eq!(server.await.unwrap().len(), 2);
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
