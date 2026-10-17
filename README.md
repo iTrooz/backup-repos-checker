@@ -24,7 +24,15 @@ Every configured bucket is listed in full, with automatic pagination.
 Repository locations use `s3://bucket/folder` (literal S3 keys, not URL-encoded
 paths); `s3://bucket` configures an entire bucket. Duplicate or overlapping
 repositories in a bucket are rejected. A trailing slash is optional.
-`max_age_days` defaults to 7 and must be positive.
+Configure the freshness threshold separately:
+
+```toml
+[checks.age]
+max_age_days = 7
+```
+
+`checks.age.max_age_days` defaults to 7 and must be positive. The section may
+be omitted. Move any existing top-level `max_age_days` into `[checks.age]`.
 
 `check` displays a folder tree with collapsed repository entries:
 

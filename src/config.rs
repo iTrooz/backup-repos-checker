@@ -8,10 +8,28 @@ use serde::Deserialize;
 pub struct Config {
     pub s3_endpoint: String,
     pub s3_region: String,
-    #[serde(default = "default_max_age")]
-    pub max_age_days: u32,
+    #[serde(default)]
+    pub checks: ChecksConfig,
     pub repositories: Vec<RepositoryConfig>,
     pub email: Option<crate::report::EmailConfig>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ChecksConfig {
+    pub age: AgeCheckConfig,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgeCheckConfig {
+    pub max_age_days: u32,
+}
+
+impl Default for AgeCheckConfig {
+    fn default() -> Self {
+        Self { max_age_days: 7 }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -27,10 +45,6 @@ pub struct RepositoryLocation<'a> {
     pub header_check: Option<&'a crate::header::HeaderCheck>,
 }
 
-fn default_max_age() -> u32 {
-    7
-}
-
 impl Config {
     pub fn parse(text: &str) -> Result<Self> {
         let config: Self = toml::from_str(text).context("invalid config.toml")?;
@@ -43,7 +57,10 @@ impl Config {
             !config.s3_region.trim().is_empty(),
             "S3 region cannot be empty"
         );
-        ensure!(config.max_age_days > 0, "max_age_days must be positive");
+        ensure!(
+            config.checks.age.max_age_days > 0,
+            "checks.age.max_age_days must be positive"
+        );
         ensure!(
             !config.repositories.is_empty(),
             "configure at least one repository"
@@ -119,8 +136,27 @@ mod tests {
     #[test]
     fn defaults_and_multiple_buckets() {
         let config = config("'s3://one/a', 's3://two/b'").unwrap();
-        assert_eq!(config.max_age_days, 7);
+        assert_eq!(config.checks.age.max_age_days, 7);
         assert_eq!(config.buckets().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn age_check_section_defaults_and_overrides() {
+        let base = "s3_endpoint = 'https://example.com'\ns3_region = 'test'\n[[repositories]]\nuri = 's3://bucket/repo'\n";
+        for section in ["[checks]", "[checks.age]"] {
+            let config = Config::parse(&format!("{base}{section}")).unwrap();
+            assert_eq!(config.checks.age.max_age_days, 7);
+        }
+        let config = Config::parse(&format!("{base}[checks.age]\nmax_age_days = 14")).unwrap();
+        assert_eq!(config.checks.age.max_age_days, 14);
+        let error = Config::parse(&format!("{base}[checks.age]\nmax_age_days = 0")).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("checks.age.max_age_days must be positive")
+        );
+        assert!(Config::parse(&format!("max_age_days = 7\n{base}")).is_err());
+        assert!(Config::parse(&format!("{base}[checks.age]\nmax_age_days = -1")).is_err());
     }
 
     #[test]

@@ -48,6 +48,7 @@ async fn main() -> ExitCode {
 async fn run(cli: Cli) -> Result<bool> {
     let text = std::fs::read_to_string("config.toml").context("cannot read ./config.toml")?;
     let config = config::Config::parse(&text)?;
+    let max_age_days = config.checks.age.max_age_days;
     let email = if matches!(cli.command, Command::Report { .. }) {
         let email = config
             .email
@@ -77,7 +78,7 @@ async fn run(cli: Cli) -> Result<bool> {
                 write!(
                     stdout,
                     "{}",
-                    tree.render(&format!("s3://{bucket}"), now, config.max_age_days, color)
+                    tree.render(&format!("s3://{bucket}"), now, max_age_days, color)
                 )?;
                 for diagnostic in tree.header_diagnostics(&format!("s3://{bucket}")) {
                     eprintln!("{diagnostic}");
@@ -88,14 +89,14 @@ async fn run(cli: Cli) -> Result<bool> {
             let issues: Vec<_> = trees
                 .iter()
                 .flat_map(|(bucket, tree)| {
-                    tree.issues(&format!("s3://{bucket}"), now, config.max_age_days)
+                    tree.issues(&format!("s3://{bucket}"), now, max_age_days)
                 })
                 .collect();
             if issues.is_empty() {
                 println!("No red or yellow entries; no email sent.");
             } else {
                 let email = email.expect("report configuration validated");
-                let body = report::body(&issues, config.max_age_days);
+                let body = report::body(&issues, max_age_days);
                 let message = email.message(body.clone())?;
                 if dry_run {
                     // Preview readable text, not MIME-encoded content or credentials.

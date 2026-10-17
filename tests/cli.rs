@@ -198,6 +198,34 @@ fn healthy_report_skips_smtp() {
 }
 
 #[test]
+fn report_uses_nested_age_threshold() {
+    let contents = format!(
+        "<Contents><Key>repo/file</Key><LastModified>{}</LastModified></Contents>",
+        (chrono::Utc::now() - chrono::TimeDelta::days(8)).to_rfc3339(),
+    );
+    let output = with_listing(
+        &contents,
+        &["report", "--dry-run"],
+        &format!("[checks.age]\nmax_age_days = 14\n{EMAIL}"),
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("no email sent")
+    );
+    let output = with_listing(
+        &contents,
+        &["report", "--dry-run"],
+        &format!("[checks.age]\nmax_age_days = 3\n{EMAIL}"),
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("[STALE] s3://test-bucket/repo"));
+    assert!(stdout.contains("Freshness threshold: 3 days"));
+}
+
+#[test]
 fn report_requires_email_configuration() {
     let output = run_args(
         "s3_endpoint = 'https://example.com'\ns3_region = 'us-east-1'\n[[repositories]]\nuri = 's3://bucket/repo'",
