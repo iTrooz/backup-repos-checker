@@ -254,6 +254,7 @@ pub async fn inspect(
     repositories: &[RepositoryLocation<'_>],
     checks: Selection,
 ) -> Result<Folder> {
+    // Seed configured paths so missing repositories still appear in the result.
     let mut root = Folder {
         checks,
         ..Folder::default()
@@ -262,21 +263,26 @@ pub async fn inspect(
         root.at(repository.prefix).repository = Some(Repository::default());
     }
     let entries = storage.list().await?;
+    // Bound concurrent header downloads while preserving listing order for diagnostics.
     let mut inspected = entries
         .map(|entry| async move {
             let entry = entry?;
+            // Match whole path components; a bare object "repo" is not the folder "repo/".
+            // An empty prefix represents a repository covering the entire bucket.
             let repository = repositories.iter().find(|repo| {
                 repo.prefix.is_empty()
                     || (contains(repo.prefix, &entry.path) && entry.path != repo.prefix)
             });
             let mut checked = false;
             let mut failure = None;
+            // Read headers only for opted-in repositories, never for directory markers.
             if checks.content
                 && !entry.path.ends_with('/')
                 && let Some(repository) = repository
                 && let Some(header_check) = repository.header_check
             {
                 checked = true;
+                // Rules use repository-relative paths; bucket-root repos already have those.
                 let relative = if repository.prefix.is_empty() {
                     entry.path.as_str()
                 } else {
@@ -290,8 +296,8 @@ pub async fn inspect(
             Ok::<_, anyhow::Error>((entry, repository, checked, failure))
         })
         .buffered(CHECK_CONCURRENCY);
+    // Merge completed checks into collapsed repository nodes, propagating storage errors.
     while let Some((entry, repository, checked, failure)) = inspected.try_next().await? {
-        // A bare object named "repo" is not the folder "repo/".
         let marker = entry.path.ends_with('/');
         if let Some(repository) = repository {
             let repo = root
@@ -304,11 +310,13 @@ pub async fn inspect(
                 repo.checked_files += 1;
             }
             if let Some(failure) = failure {
+                // Count every failure, but retain only a bounded sample of offending paths.
                 repo.header_failures += 1;
                 if repo.failure_samples.len() < MAX_FAILURE_SAMPLES {
                     repo.failure_samples.push(failure);
                 }
             }
+            // Directory-marker timestamps establish existence, not backup freshness.
             if checks.age && !marker {
                 repo.newest = Some(
                     repo.newest
@@ -316,6 +324,7 @@ pub async fn inspect(
                 );
             }
         } else if checks.folders {
+            // Expose unconfigured folders, excluding object filenames from the tree.
             let folder = if marker {
                 entry.path.trim_end_matches('/')
             } else {
