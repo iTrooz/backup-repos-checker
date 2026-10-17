@@ -69,6 +69,39 @@ Exit codes for both commands (including dry runs): **0** for a completed check w
 stale or unconfigured folders exist), **1** for missing repositories, **2** for
 configuration, credentials, network, email delivery, or other execution errors.
 
+## Docker / scheduled reports
+
+```sh
+cp .env.example .env
+cp config.example.toml config.toml
+# Edit both files, including the [email] section in config.toml.
+docker compose up -d --build
+docker compose logs -f
+```
+
+No Compose override file is needed. `.env` holds the AWS/SMTP credentials and
+schedule; `config.toml` holds the endpoint, repositories, and email settings.
+Both local files are gitignored and excluded from the Docker build context.
+Compose mounts `config.toml` read-only and refuses to create it if missing.
+
+The container runs `report` through BusyBox cron in the foreground, with `tini`
+handling signals. `CRON_SCHEDULE` defaults to `5 0 * * *` (daily at 00:05), and
+`TZ` defaults to `Etc/UTC`. Reports start on the next scheduled run, not on
+container startup. Cron and CLI output are forwarded to container logs. CLI
+failures do not stop the scheduler. After editing `.env`, run
+`docker compose up -d` to recreate the container with the new environment.
+
+Run the CLI manually in a temporary container using the same configuration:
+
+```sh
+docker compose run --rm backup-repos-checker view
+docker compose run --rm backup-repos-checker report --dry-run
+docker compose run --rm backup-repos-checker report
+```
+
+The Dockerfile uses a multi-stage Rust build; the runtime image only contains
+the CLI, cron, CA certificates, timezone data, and the init process.
+
 ## Development
 
 ```sh

@@ -1,0 +1,21 @@
+services:
+  backup-repos-checker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      CRON_SCHEDULE: ${CRON_SCHEDULE:-5 0 * * *}
+      TZ: ${TZ:-Etc/UTC}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?Set AWS_ACCESS_KEY_ID in .env}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?Set AWS_SECRET_ACCESS_KEY in .env}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    volumes:
+      - type: bind
+        source: ./config.toml
+        target: /config/config.toml
+        read_only: true
+        bind:
+          create_host_path: false
