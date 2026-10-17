@@ -1,0 +1,18 @@
+s3_endpoint = "https://s3.example.com"
+s3_region = "us-east-1"
+max_age_days = 7
+
+repositories = [
+  "s3://bucket-one/backups/server-a",
+  "s3://bucket-one/backups/server-b",
+  "s3://bucket-two/database",
+]
+
+# Required only for the report subcommand.
+[email]
+smtp_host = "smtp.example.com"
+smtp_port = 587
+encryption = "starttls" # "starttls" (default, port 587) or "tls" (port 465)
+from = "backups@example.com"
+to = ["ops@example.com"]
+subject = "Backup repository alerts"

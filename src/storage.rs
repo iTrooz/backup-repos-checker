@@ -1,0 +1,204 @@
+use anyhow::{Context, Result};
+use async_trait::async_trait;
+use aws_sdk_s3::{
+    Client,
+    config::{BehaviorVersion, Credentials, Region},
+};
+use chrono::{DateTime, Utc};
+use futures::stream::BoxStream;
+use futures::{StreamExt, stream};
+
+use crate::config::Config;
+
+#[derive(Debug)]
+pub struct FileEntry {
+    pub path: String,
+    pub modified: DateTime<Utc>,
+}
+
+/// Implementations recursively stream all files, including directory markers.
+/// Errors must propagate: an incomplete listing cannot establish missing repositories.
+#[async_trait]
+pub trait Storage: Send + Sync {
+    async fn list(&self) -> Result<BoxStream<'_, Result<FileEntry>>>;
+}
+
+pub struct S3Storage {
+    client: Client,
+    bucket: String,
+}
+
+impl S3Storage {
+    pub fn new(config: &Config, bucket: &str) -> Result<Self> {
+        let access_key =
+            std::env::var("AWS_ACCESS_KEY_ID").context("AWS_ACCESS_KEY_ID must be set")?;
+        let secret_key =
+            std::env::var("AWS_SECRET_ACCESS_KEY").context("AWS_SECRET_ACCESS_KEY must be set")?;
+        anyhow::ensure!(
+            !access_key.is_empty() && !secret_key.is_empty(),
+            "S3 credentials cannot be empty"
+        );
+        let credentials = Credentials::new(
+            access_key,
+            secret_key,
+            std::env::var("AWS_SESSION_TOKEN").ok(),
+            None,
+            "environment",
+        );
+        let sdk_config = aws_sdk_s3::config::Builder::new()
+            .behavior_version(BehaviorVersion::latest())
+            .region(Region::new(config.s3_region.clone()))
+            .endpoint_url(&config.s3_endpoint)
+            .credentials_provider(credentials)
+            .force_path_style(true)
+            .build();
+        Ok(Self {
+            client: Client::from_conf(sdk_config),
+            bucket: bucket.to_owned(),
+        })
+    }
+}
+
+#[async_trait]
+impl Storage for S3Storage {
+    async fn list(&self) -> Result<BoxStream<'_, Result<FileEntry>>> {
+        // Retain raw S3 keys: normalizing paths would lose directory markers.
+        let pages = stream::try_unfold(Some(None), move |state| async move {
+            let Some(token) = state else {
+                return Ok::<_, anyhow::Error>(None);
+            };
+            let page = self
+                .client
+                .list_objects_v2()
+                .bucket(&self.bucket)
+                .set_continuation_token(token.clone())
+                .send()
+                .await
+                .context("S3 ListObjectsV2 failed")?;
+            let next = if page.is_truncated() == Some(true) {
+                let next = page
+                    .next_continuation_token()
+                    .filter(|next| !next.is_empty())
+                    .context("truncated S3 listing omitted continuation token")?;
+                anyhow::ensure!(
+                    Some(next) != token.as_deref(),
+                    "S3 listing repeated continuation token"
+                );
+                Some(Some(next.to_owned()))
+            } else {
+                None
+            };
+            let entries = page
+                .contents()
+                .iter()
+                .map(|object| {
+                    let path = object.key().context("S3 object omitted key")?.to_owned();
+                    let modified = object
+                        .last_modified()
+                        .context("S3 object omitted LastModified")?;
+                    let modified =
+                        DateTime::from_timestamp(modified.secs(), modified.subsec_nanos())
+                            .context("S3 object has invalid LastModified")?;
+                    Ok(FileEntry { path, modified })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(Some((entries, next)))
+        });
+        Ok(Box::pin(pages.flat_map(|page| {
+            stream::iter(match page {
+                Ok(entries) => entries.into_iter().map(Ok).collect(),
+                Err(error) => vec![Err(error)],
+            })
+        })))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::TryStreamExt;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    async fn mock_s3(pages: Vec<String>) -> (S3Storage, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for page in pages {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0; 4096];
+                while !request.windows(4).any(|part| part == b"\r\n\r\n") {
+                    let count = socket.read(&mut buffer).await.unwrap();
+                    assert!(count > 0);
+                    request.extend_from_slice(&buffer[..count]);
+                }
+                requests.push(String::from_utf8(request).unwrap());
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{page}",
+                    page.len(),
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+            requests
+        });
+        let config = aws_sdk_s3::config::Builder::new()
+            .behavior_version(BehaviorVersion::latest())
+            .endpoint_url(endpoint)
+            .region(Region::new("us-east-1"))
+            .credentials_provider(Credentials::new("test", "test", None, None, "test"))
+            .force_path_style(true)
+            .build();
+        (
+            S3Storage {
+                client: Client::from_conf(config),
+                bucket: "test-bucket".into(),
+            },
+            server,
+        )
+    }
+
+    #[tokio::test]
+    async fn paginates_and_preserves_directory_markers() {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let (storage, server) = mock_s3(vec![
+                "<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>page-two</NextContinuationToken><Contents><Key>repo/</Key><LastModified>2026-01-01T00:00:00Z</LastModified><Size>0</Size></Contents></ListBucketResult>".into(),
+                "<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>repo/deep/file</Key><LastModified>2026-01-02T00:00:00Z</LastModified><Size>42</Size></Contents></ListBucketResult>".into(),
+            ]).await;
+            let entries: Vec<_> = storage.list().await.unwrap().try_collect().await.unwrap();
+            assert_eq!(entries.len(), 2);
+            assert_eq!(entries[0].path, "repo/");
+            assert_eq!(entries[1].path, "repo/deep/file");
+            assert!(entries[1].modified > entries[0].modified);
+            let requests = server.await.unwrap();
+            let target = requests[0].split_whitespace().nth(1).unwrap();
+            assert_eq!(target.split('?').next().unwrap().trim_end_matches('/'), "/test-bucket");
+            assert!(target.contains("list-type=2"));
+            assert!(requests[1].contains("continuation-token=page-two"));
+            assert!(requests.iter().all(|request| request.to_lowercase().contains("authorization: aws4-hmac-sha256")));
+        }).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn truncated_listing_requires_a_continuation_token() {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let (storage, server) = mock_s3(vec![
+                "<ListBucketResult><IsTruncated>true</IsTruncated></ListBucketResult>".into(),
+            ])
+            .await;
+            let entries: Result<Vec<_>> = storage.list().await.unwrap().try_collect().await;
+            assert!(
+                entries
+                    .unwrap_err()
+                    .to_string()
+                    .contains("continuation token")
+            );
+            server.await.unwrap();
+        })
+        .await
+        .unwrap();
+    }
+}
