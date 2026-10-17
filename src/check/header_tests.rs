@@ -62,13 +62,15 @@ async fn header_checks_are_recursive_and_fail_closed() {
     let tree = inspect(&storage, &repositories, Selection::default())
         .await
         .unwrap();
-    assert!(tree.failed());
+    assert!(tree.failed(Selection::default()));
     assert_eq!(storage.reads.load(std::sync::atomic::Ordering::SeqCst), 3);
-    let rendered = tree.render("s3://test", Utc::now(), 7, true);
+    let rendered = tree.render("s3://test", Utc::now(), 7, true, Selection::default());
     assert!(rendered.contains("\x1b[31mrepo"));
     assert!(rendered.contains("[header failures: 3/4]"));
     assert!(!rendered.contains("bad.gz"));
-    let issues = tree.issues("s3://test", Utc::now(), 7).join("\n");
+    let issues = tree
+        .issues("s3://test", Utc::now(), 7, Selection::default())
+        .join("\n");
     assert!(issues.contains("[HEADER CHECK FAILED] s3://test/repo"));
     assert!(issues.contains("deep/bad.gz"));
     assert!(issues.contains("no matching header rule"));
@@ -98,7 +100,10 @@ async fn checks_every_file_but_bounds_failure_details() {
     let repo = tree.repository.as_ref().unwrap();
     assert_eq!(repo.header_failures, 27);
     assert_eq!(repo.failure_samples.len(), MAX_FAILURE_SAMPLES);
-    assert!(tree.issues("s3://test", Utc::now(), 7)[0].contains("additional failures omitted"));
+    assert!(
+        tree.issues("s3://test", Utc::now(), 7, Selection::default())[0]
+            .contains("additional failures omitted")
+    );
 }
 
 /// Distinguish failed downloads from files that fail header validation.
@@ -136,9 +141,9 @@ async fn disabled_content_never_reads_objects() {
     }];
     let checks = Selection::from_kinds(&[selection::Kind::Folders, selection::Kind::Age]);
     let tree = inspect(&storage, &repositories, checks).await.unwrap();
-    assert!(!tree.failed());
+    assert!(!tree.failed(checks));
     assert_eq!(storage.reads.load(std::sync::atomic::Ordering::SeqCst), 0);
-    assert!(tree.header_diagnostics("s3://test").is_empty());
+    assert!(tree.header_diagnostics("s3://test", checks).is_empty());
 }
 
 /// Missing repositories are neutral when folder validation is not selected.
@@ -155,9 +160,9 @@ async fn disabled_folders_do_not_fail_missing_repositories() {
     }];
     let checks = Selection::from_kinds(&[selection::Kind::Age, selection::Kind::Content]);
     let tree = inspect(&storage, &repositories, checks).await.unwrap();
-    assert!(!tree.failed());
-    assert!(tree.issues("s3://test", Utc::now(), 7).is_empty());
-    let rendered = tree.render("s3://test", Utc::now(), 7, true);
+    assert!(!tree.failed(checks));
+    assert!(tree.issues("s3://test", Utc::now(), 7, checks).is_empty());
+    let rendered = tree.render("s3://test", Utc::now(), 7, true, checks);
     assert!(rendered.contains("missing  [not checked]"));
     assert!(!rendered.contains('\x1b'));
 }
@@ -182,9 +187,9 @@ async fn disabled_age_does_not_report_stale_or_unconfigured_entries() {
     let now = Utc::now() + TimeDelta::days(8);
     let checks = Selection::from_kinds(&[selection::Kind::Content]);
     let tree = inspect(&storage, &repositories, checks).await.unwrap();
-    assert!(!tree.failed());
-    assert!(tree.issues("s3://test", now, 7).is_empty());
-    let rendered = tree.render("s3://test", now, 7, true);
+    assert!(!tree.failed(checks));
+    assert!(tree.issues("s3://test", now, 7, checks).is_empty());
+    let rendered = tree.render("s3://test", now, 7, true, checks);
     assert!(rendered.contains("\x1b[32mrepo"));
     assert!(!rendered.contains("\x1b[33m"));
     assert!(!rendered.contains("latest:"));
@@ -205,11 +210,77 @@ async fn content_without_rules_is_neutral() {
     }];
     let checks = Selection::from_kinds(&[selection::Kind::Content]);
     let tree = inspect(&storage, &repositories, checks).await.unwrap();
-    assert!(!tree.failed());
+    assert!(!tree.failed(checks));
     assert!(
         !tree
-            .render("s3://test", Utc::now(), 7, true)
+            .render("s3://test", Utc::now(), 7, true, checks)
             .contains('\x1b')
     );
     assert_eq!(storage.reads.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+/// An entire-bucket repository renders as one line without exposing its contents.
+#[tokio::test]
+async fn bucket_root_repository_collapses_everything() {
+    let storage = HeaderStorage {
+        files: [("deep/file".to_owned(), vec![])].into(),
+        reads: 0.into(),
+        fail_reads: true,
+    };
+    let repositories = [RepositoryLocation {
+        prefix: "",
+        header_check: None,
+    }];
+    let checks = Selection::default();
+    let tree = inspect(&storage, &repositories, checks).await.unwrap();
+    assert!(!tree.failed(checks));
+    assert!(tree.issues("s3://test", Utc::now(), 7, checks).is_empty());
+    assert_eq!(
+        tree.render("s3://test", Utc::now(), 7, false, checks)
+            .lines()
+            .count(),
+        1
+    );
+}
+
+/// A single tree can be evaluated under different run-wide selections without mutation.
+#[test]
+fn tree_does_not_retain_check_selection() {
+    let now = Utc::now();
+    let mut tree = Folder::default();
+    tree.at("parent/repo").repository = Some(Repository {
+        exists: true,
+        newest: Some(now - TimeDelta::days(10)),
+        checked_files: 1,
+        header_failures: 1,
+        failure_samples: vec!["file: invalid header".to_owned()],
+    });
+    tree.at("parent/missing").repository = Some(Repository::default());
+    tree.at("unconfigured");
+
+    let folders = Selection::from_kinds(&[selection::Kind::Folders]);
+    let age = Selection::from_kinds(&[selection::Kind::Age]);
+    let content = Selection::from_kinds(&[selection::Kind::Content]);
+    let repo = &tree.children["parent"].children["repo"];
+    assert!(!repo.failed(folders));
+    assert!(!repo.failed(age));
+    assert!(repo.failed(content));
+    assert!(tree.failed(folders));
+    assert!(!tree.failed(age));
+
+    let folder_issues = tree.issues("s3://test", now, 7, folders).join("\n");
+    assert!(folder_issues.contains("[MISSING]"));
+    assert!(folder_issues.contains("[UNCONFIGURED]"));
+    assert!(!folder_issues.contains("[STALE]"));
+    assert!(!folder_issues.contains("[HEADER CHECK FAILED]"));
+    assert_eq!(tree.issues("s3://test", now, 7, age).len(), 1);
+    assert!(tree.issues("s3://test", now, 7, age)[0].starts_with("[STALE]"));
+    assert_eq!(tree.issues("s3://test", now, 7, content).len(), 1);
+    assert!(tree.issues("s3://test", now, 7, content)[0].starts_with("[HEADER CHECK FAILED]"));
+    assert!(tree.header_diagnostics("s3://test", folders).is_empty());
+    assert_eq!(tree.header_diagnostics("s3://test", content).len(), 1);
+    let rendered = tree.render("s3://test", now, 7, true, folders);
+    assert!(rendered.contains("\x1b[32mrepo"));
+    assert!(!rendered.contains("header failures"));
+    assert!(!rendered.contains("latest:"));
 }

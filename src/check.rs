@@ -25,11 +25,18 @@ struct Repository {
     failure_samples: Vec<String>,
 }
 
-/// Repository findings and child folders sharing the same check selection.
+/// One folder-tree node containing repository findings and named child folders.
 #[derive(Debug, Default)]
 pub struct Folder {
     repository: Option<Repository>,
     children: BTreeMap<String, Folder>,
+}
+
+/// Run-wide rendering options passed unchanged through tree traversal.
+#[derive(Clone, Copy)]
+struct RenderOptions {
+    cutoff: DateTime<Utc>,
+    color: bool,
     checks: Selection,
 }
 
@@ -44,18 +51,11 @@ enum Status {
 }
 
 impl Folder {
-    /// Create ancestors while propagating the active checks to every tree node.
+    /// Create missing ancestors and return the node at the requested path.
     fn at(&mut self, path: &str) -> &mut Self {
         let mut folder = self;
         for component in path.split('/').filter(|part| !part.is_empty()) {
-            let checks = folder.checks;
-            folder = folder
-                .children
-                .entry(component.to_owned())
-                .or_insert_with(|| Self {
-                    checks,
-                    ..Self::default()
-                });
+            folder = folder.children.entry(component.to_owned()).or_default();
         }
         folder
     }
@@ -65,41 +65,54 @@ impl Folder {
     }
 
     /// Only enabled folder and content failures affect the health exit code.
-    pub fn failed(&self) -> bool {
-        self.repository
-            .as_ref()
-            .is_some_and(|repo| (self.checks.folders && !repo.exists) || repo.header_failures > 0)
-            || self.children.values().any(Self::failed)
+    pub fn failed(&self, checks: Selection) -> bool {
+        self.repository.as_ref().is_some_and(|repo| {
+            (checks.folders && !repo.exists) || (checks.content && repo.header_failures > 0)
+        }) || self.children.values().any(|child| child.failed(checks))
     }
 
     /// Keep skipped checks neutral rather than claiming they passed or failed.
-    fn status(&self, cutoff: DateTime<Utc>) -> Status {
+    fn status(&self, cutoff: DateTime<Utc>, checks: Selection) -> Status {
         match &self.repository {
             Some(repo) if !repo.exists => {
-                if self.checks.folders {
+                if checks.folders {
                     Status::Missing
                 } else {
                     Status::Group
                 }
             }
-            Some(repo) if repo.header_failures > 0 => Status::InvalidHeaders,
-            Some(repo) if self.checks.age => {
+            Some(repo) if checks.content && repo.header_failures > 0 => Status::InvalidHeaders,
+            Some(repo) if checks.age => {
                 if repo.newest.is_some_and(|modified| modified >= cutoff) {
                     Status::Fresh
                 } else {
                     Status::Stale
                 }
             }
-            Some(repo) if self.checks.folders || repo.checked_files > 0 => Status::Fresh,
+            Some(repo) if checks.folders || (checks.content && repo.checked_files > 0) => {
+                Status::Fresh
+            }
             Some(_) => Status::Group,
-            None if self.checks.folders && !self.has_repository() => Status::Unconfigured,
+            None if checks.folders && !self.has_repository() => Status::Unconfigured,
             None => Status::Group,
         }
     }
 
-    pub fn issues(&self, path: &str, now: DateTime<Utc>, days: u32) -> Vec<String> {
+    /// Evaluate stored findings using the run-wide check selection.
+    pub fn issues(
+        &self,
+        path: &str,
+        now: DateTime<Utc>,
+        days: u32,
+        checks: Selection,
+    ) -> Vec<String> {
         let mut issues = Vec::new();
-        self.collect_issues(path, now - TimeDelta::days(days.into()), &mut issues);
+        self.collect_issues(
+            path,
+            now - TimeDelta::days(days.into()),
+            checks,
+            &mut issues,
+        );
         issues
     }
 
@@ -120,17 +133,27 @@ impl Folder {
         })
     }
 
-    pub fn header_diagnostics(&self, path: &str) -> Vec<String> {
+    /// Return bounded content diagnostics only when content checks are enabled.
+    pub fn header_diagnostics(&self, path: &str, checks: Selection) -> Vec<String> {
+        if !checks.content {
+            return Vec::new();
+        }
         let mut issues: Vec<_> = self.header_failure(path).into_iter().collect();
         for (name, child) in &self.children {
-            issues.extend(child.header_diagnostics(&format!("{path}/{name}")));
+            issues.extend(child.header_diagnostics(&format!("{path}/{name}"), checks));
         }
         issues
     }
 
     /// Collect only enabled findings for reports and diagnostics.
-    fn collect_issues(&self, path: &str, cutoff: DateTime<Utc>, issues: &mut Vec<String>) {
-        match self.status(cutoff) {
+    fn collect_issues(
+        &self,
+        path: &str,
+        cutoff: DateTime<Utc>,
+        checks: Selection,
+        issues: &mut Vec<String>,
+    ) {
+        match self.status(cutoff, checks) {
             Status::Missing => issues.push(format!("[MISSING] {path}")),
             Status::InvalidHeaders => {
                 let repo = self
@@ -138,7 +161,7 @@ impl Folder {
                     .as_ref()
                     .expect("repository with invalid headers");
                 issues.push(self.header_failure(path).expect("invalid headers"));
-                if self.checks.age && repo.newest.is_none_or(|modified| modified < cutoff) {
+                if checks.age && repo.newest.is_none_or(|modified| modified < cutoff) {
                     issues.push(format!("[STALE] {path}"));
                 }
             }
@@ -158,19 +181,30 @@ impl Folder {
         }
         if self.repository.is_none() {
             for (name, child) in &self.children {
-                child.collect_issues(&format!("{path}/{name}"), cutoff, issues);
+                child.collect_issues(&format!("{path}/{name}"), cutoff, checks, issues);
             }
         }
     }
 
-    pub fn render(&self, name: &str, now: DateTime<Utc>, days: u32, color: bool) -> String {
+    /// Render results without storing run-wide selection or formatting on tree nodes.
+    pub fn render(
+        &self,
+        name: &str,
+        now: DateTime<Utc>,
+        days: u32,
+        color: bool,
+        checks: Selection,
+    ) -> String {
         let mut output = String::new();
         self.render_into(
             name,
             "",
             None,
-            now - TimeDelta::days(days.into()),
-            color,
+            RenderOptions {
+                cutoff: now - TimeDelta::days(days.into()),
+                color,
+                checks,
+            },
             &mut output,
         );
         output
@@ -182,11 +216,10 @@ impl Folder {
         name: &str,
         indent: &str,
         last: Option<bool>,
-        cutoff: DateTime<Utc>,
-        color: bool,
+        options: RenderOptions,
         output: &mut String,
     ) {
-        let style = match self.status(cutoff) {
+        let style = match self.status(options.cutoff, options.checks) {
             Status::Fresh => "32",
             Status::Stale => "33",
             Status::Missing => "31;4",
@@ -195,19 +228,20 @@ impl Folder {
             Status::Group => "",
         };
         let mut detail = match &self.repository {
-            Some(repo) if !repo.exists => if self.checks.folders {
+            Some(repo) if !repo.exists => if options.checks.folders {
                 "  [not found]"
             } else {
                 "  [not checked]"
             }
             .to_owned(),
-            Some(repo) if self.checks.age => repo.newest.map_or_else(
+            Some(repo) if options.checks.age => repo.newest.map_or_else(
                 || "  [no files]".to_owned(),
                 |timestamp| format!("  [latest: {}]", timestamp.to_rfc3339()),
             ),
             _ => String::new(),
         };
         if let Some(repo) = &self.repository
+            && options.checks.content
             && repo.checked_files > 0
         {
             detail.push_str(&format!(
@@ -219,7 +253,7 @@ impl Folder {
         if let Some(last) = last {
             output.push_str(if last { "└── " } else { "├── " });
         }
-        if color && !style.is_empty() {
+        if options.color && !style.is_empty() {
             output.push_str(&format!("\x1b[{style}m{name}{detail}\x1b[0m\n"));
         } else {
             output.push_str(&format!("{name}{detail}\n"));
@@ -240,8 +274,7 @@ impl Folder {
                 name,
                 &child_indent,
                 Some(index + 1 == self.children.len()),
-                cutoff,
-                color,
+                options,
                 output,
             );
         }
@@ -255,10 +288,7 @@ pub async fn inspect(
     checks: Selection,
 ) -> Result<Folder> {
     // Seed configured paths so missing repositories still appear in the result.
-    let mut root = Folder {
-        checks,
-        ..Folder::default()
-    };
+    let mut root = Folder::default();
     for repository in repositories {
         root.at(repository.prefix).repository = Some(Repository::default());
     }
@@ -388,7 +418,7 @@ mod tests {
         let prefixes =
             ["backups/fresh", "backups/stale", "backups/empty", "missing"].map(str::to_owned);
         let tree = inspect(&storage, &prefixes).await.unwrap();
-        let rendered = tree.render("s3://test", now, 7, true);
+        let rendered = tree.render("s3://test", now, 7, true, Selection::default());
         assert!(rendered.contains("\x1b[32mfresh"));
         assert!(rendered.contains("\x1b[33mstale"));
         assert!(rendered.contains("\x1b[33mempty  [no files]"));
@@ -396,9 +426,13 @@ mod tests {
         assert!(rendered.contains("\x1b[31muntracked"));
         assert!(!rendered.contains("deep"));
         assert!(!rendered.contains("\x1b[31mbackups"));
-        assert!(tree.failed());
-        assert!(!tree.render("s3://test", now, 7, false).contains('\x1b'));
-        let issues = tree.issues("s3://test", now, 7);
+        assert!(tree.failed(Selection::default()));
+        assert!(
+            !tree
+                .render("s3://test", now, 7, false, Selection::default())
+                .contains('\x1b')
+        );
+        let issues = tree.issues("s3://test", now, 7, Selection::default());
         assert_eq!(issues.len(), 5);
         assert!(
             issues
@@ -429,21 +463,7 @@ mod tests {
             inspect(&storage, &["repo".to_owned()])
                 .await
                 .unwrap()
-                .failed()
-        );
-    }
-
-    #[tokio::test]
-    async fn bucket_root_repository_collapses_everything() {
-        let storage = FakeStorage(vec![("deep/file", Utc::now())]);
-        let tree = inspect(&storage, &[String::new()]).await.unwrap();
-        assert!(!tree.failed());
-        assert!(tree.issues("s3://test", Utc::now(), 7).is_empty());
-        assert_eq!(
-            tree.render("s3://test", Utc::now(), 7, false)
-                .lines()
-                .count(),
-            1
+                .failed(Selection::default())
         );
     }
 

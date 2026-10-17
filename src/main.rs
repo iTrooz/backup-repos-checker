@@ -86,7 +86,7 @@ async fn run(cli: Cli) -> Result<bool> {
     }
     // Only render or send after every listing succeeds: never report partial results.
     let now = Utc::now();
-    let failed = trees.iter().any(|(_, tree)| tree.failed());
+    let failed = trees.iter().any(|(_, tree)| tree.failed(checks));
     match cli.command {
         Command::Check { .. } => {
             let color = io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
@@ -95,9 +95,9 @@ async fn run(cli: Cli) -> Result<bool> {
                 write!(
                     stdout,
                     "{}",
-                    tree.render(&format!("s3://{bucket}"), now, max_age_days, color)
+                    tree.render(&format!("s3://{bucket}"), now, max_age_days, color, checks)
                 )?;
-                for diagnostic in tree.header_diagnostics(&format!("s3://{bucket}")) {
+                for diagnostic in tree.header_diagnostics(&format!("s3://{bucket}"), checks) {
                     eprintln!("{diagnostic}");
                 }
             }
@@ -106,7 +106,7 @@ async fn run(cli: Cli) -> Result<bool> {
             let issues: Vec<_> = trees
                 .iter()
                 .flat_map(|(bucket, tree)| {
-                    tree.issues(&format!("s3://{bucket}"), now, max_age_days)
+                    tree.issues(&format!("s3://{bucket}"), now, max_age_days, checks)
                 })
                 .collect();
             if issues.is_empty() {
