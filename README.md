@@ -23,3 +23,8 @@ A Dockerfile and compose file are provided to run the tool on a schedule. To use
 - Copy `.config.example.toml` to `config.toml` and edit it
 - `docker compose up --build -d`
 - Done! You may run `backup-repos-checker report --dry-run` to ensure your S3 and email configuration is correct.
+
+# Licence
+
+
+[GPL-2.0-only OR GPL-3.0-or-later with proxy being iTrooz](https://itrooz.fr/posts/gpl_licence/)
