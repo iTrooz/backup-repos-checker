@@ -41,7 +41,7 @@ fn silenced_age_is_not_an_alert() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("All backup repositories are healthy."));
-    assert!(!stdout.contains("[age:") && !stdout.contains("[STALE]"));
+    assert!(!stdout.contains(": age:"));
 }
 
 /// Silencing folder validation makes a missing repository neutral and successful.

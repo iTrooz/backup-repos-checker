@@ -39,11 +39,11 @@ async fn content_checks_are_recursive_and_skip_unmatched_files() {
     let issues = tree
         .issues("s3://test", Utc::now(), 7, Selection::default())
         .join("\n");
-    assert!(issues.contains("[CONTENT CHECK FAILED] s3://test/repo"));
+    assert!(issues.contains("s3://test/repo: content: 2 files do not match pattern"));
     assert!(issues.contains("deep/bad.gz"));
     assert!(!issues.contains("unmatched.txt"));
     assert!(!issues.contains("root.gz"));
-    assert!(!issues.contains("[STALE]"));
+    assert!(!issues.contains(": age:"));
 }
 
 /// Unmatched files succeed even when downloading them would fail.

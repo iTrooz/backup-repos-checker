@@ -51,8 +51,8 @@ async fn silencing_is_local_and_skips_execution() {
     assert!(output.contains("── missing (0 files)\n"));
     assert!(output.contains("\x1b[33mactive"));
     let issues = tree.issues("s3://test", now, 7, checks).join("\n");
-    assert!(issues.contains("[STALE] s3://test/group/active"));
-    assert!(issues.contains("[UNCONFIGURED] s3://test/unknown"));
+    assert!(issues.contains("s3://test/group/active: age:"));
+    assert!(issues.contains("s3://test/unknown: folders: unconfigured"));
     assert!(!issues.contains("silent"));
     assert!(!issues.contains("missing"));
     assert!(tree.content_diagnostics("s3://test", checks).is_empty());
@@ -76,7 +76,7 @@ fn silencing_masks_stored_findings_in_every_output() {
     let checks = Selection::default();
     let issues = tree.issues("s3://test", now, 7, checks);
     assert_eq!(issues.len(), 1);
-    assert!(issues[0].contains("[CONTENT CHECK FAILED]"));
+    assert!(issues[0].contains(": content: 1 files do not match pattern"));
     tree.repository
         .as_mut()
         .unwrap()

@@ -88,7 +88,14 @@ async fn run(cli: Cli) -> Result<bool> {
     }
     // Only render or send after every listing succeeds: never report partial results.
     let now = Utc::now();
-    let failed = trees.iter().any(|(_, tree)| tree.failed(checks));
+    // Evaluate once: both commands consume the same structured check results.
+    let findings: Vec<_> = trees
+        .iter()
+        .flat_map(|(bucket, tree)| {
+            check::findings(tree, &format!("s3://{bucket}"), now, max_age_days, checks)
+        })
+        .collect();
+    let failed = findings.iter().any(|finding| finding.fatal);
     match cli.command {
         Command::Check { .. } => {
             let color = io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
@@ -97,22 +104,25 @@ async fn run(cli: Cli) -> Result<bool> {
                 write!(
                     stdout,
                     "{}",
-                    tree.render(&format!("s3://{bucket}"), now, max_age_days, color, checks)
+                    check::render(&tree, &format!("s3://{bucket}"), &findings, color)
                 )?;
-                for diagnostic in tree.content_diagnostics(&format!("s3://{bucket}"), checks) {
-                    eprintln!("{diagnostic}");
-                }
+            }
+            // Preserve offending-file diagnostics, formatting the same findings rather than rechecking.
+            for finding in findings
+                .iter()
+                .filter(|finding| !finding.details.is_empty())
+            {
+                eprintln!("{}", finding.line());
             }
         }
         Command::Report {
             dry_run,
             send_even_if_healthy,
         } => {
-            let issues: Vec<_> = trees
+            let issues: Vec<_> = findings
                 .iter()
-                .flat_map(|(bucket, tree)| {
-                    tree.issues(&format!("s3://{bucket}"), now, max_age_days, checks)
-                })
+                .filter(|finding| finding.is_issue())
+                .map(check::Finding::line)
                 .collect();
             if issues.is_empty() && !send_even_if_healthy {
                 println!("No red or yellow entries; no email sent.");
@@ -126,13 +136,12 @@ async fn run(cli: Cli) -> Result<bool> {
                     &email.subject
                 };
                 let body = if healthy {
-                    let tree = trees
+                    let lines = findings
                         .iter()
-                        .map(|(bucket, tree)| {
-                            tree.render(&format!("s3://{bucket}"), now, max_age_days, false, checks)
-                        })
-                        .collect::<String>();
-                    report::healthy_body(&tree, max_age_days)
+                        .map(check::Finding::line)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    report::healthy_body(&lines, max_age_days)
                 } else {
                     report::body(&issues, max_age_days)
                 };

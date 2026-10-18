@@ -20,7 +20,7 @@ async fn latest_timestamps_use_utc_seconds() {
     );
     assert_eq!(
         tree.issues("s3://test", now, 7, checks),
-        ["[STALE] s3://test/repo (latest: 2026-10-18T00:07:32)"]
+        ["s3://test/repo: age: latest is 2026-10-18T00:07:32"]
     );
 }
 
@@ -97,17 +97,17 @@ async fn recursive_freshness_and_tree_colors() {
     assert!(
         issues
             .iter()
-            .any(|issue| issue == "[MISSING] s3://test/missing")
+            .any(|issue| issue == "s3://test/missing: folders: not found")
     );
     assert!(
         issues
             .iter()
-            .any(|issue| issue == "[UNCONFIGURED] s3://test/untracked/child")
+            .any(|issue| issue == "s3://test/untracked/child: folders: unconfigured")
     );
     assert!(
         issues
             .iter()
-            .any(|issue| issue.starts_with("[STALE] s3://test/backups/empty (no files)"))
+            .any(|issue| issue == "s3://test/backups/empty: age: no files")
     );
     assert!(
         !issues

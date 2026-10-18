@@ -4,12 +4,23 @@ use clap::ValueEnum;
 use serde::Deserialize;
 
 /// Public names accepted by CLI selection and repository silencing.
-#[derive(Clone, Copy, Debug, Deserialize, ValueEnum)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
     Folders,
     Age,
     Content,
+}
+
+impl Kind {
+    /// Stable label shared by bracketed tree details and report lines.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Folders => "folders",
+            Self::Age => "age",
+            Self::Content => "content",
+        }
+    }
 }
 
 /// Enabled checks; all are enabled when the option is omitted.

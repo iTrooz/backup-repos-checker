@@ -190,11 +190,11 @@ async fn unconfigured_folders_hide_children_only_in_tree_output() {
     assert!(
         issues
             .iter()
-            .any(|issue| issue == "[UNCONFIGURED] s3://test/group/unconfigured/deep")
+            .any(|issue| issue == "s3://test/group/unconfigured/deep: folders: unconfigured")
     );
     assert!(
         issues
             .iter()
-            .any(|issue| issue == "[UNCONFIGURED] s3://test/root-unconfigured/nested")
+            .any(|issue| issue == "s3://test/root-unconfigured/nested: folders: unconfigured")
     );
 }

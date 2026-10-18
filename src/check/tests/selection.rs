@@ -126,14 +126,16 @@ fn tree_does_not_retain_check_selection() {
     assert!(tree.failed(folders));
     assert!(!tree.failed(age));
     let folder_issues = tree.issues("s3://test", now, 7, folders).join("\n");
-    assert!(folder_issues.contains("[MISSING]"));
-    assert!(folder_issues.contains("[UNCONFIGURED]"));
-    assert!(!folder_issues.contains("[STALE]"));
-    assert!(!folder_issues.contains("[CONTENT CHECK FAILED]"));
+    assert!(folder_issues.contains(": folders: not found"));
+    assert!(folder_issues.contains(": folders: unconfigured"));
+    assert!(!folder_issues.contains(": age:"));
+    assert!(!folder_issues.contains(": content:"));
     assert_eq!(tree.issues("s3://test", now, 7, age).len(), 1);
-    assert!(tree.issues("s3://test", now, 7, age)[0].starts_with("[STALE]"));
+    assert!(tree.issues("s3://test", now, 7, age)[0].starts_with("s3://test/parent/repo: age:"));
     assert_eq!(tree.issues("s3://test", now, 7, content).len(), 1);
-    assert!(tree.issues("s3://test", now, 7, content)[0].starts_with("[CONTENT CHECK FAILED]"));
+    assert!(
+        tree.issues("s3://test", now, 7, content)[0].starts_with("s3://test/parent/repo: content:")
+    );
     assert!(tree.content_diagnostics("s3://test", folders).is_empty());
     assert_eq!(tree.content_diagnostics("s3://test", content).len(), 1);
     let rendered = tree.render("s3://test", now, 7, true, folders);

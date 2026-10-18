@@ -5,6 +5,10 @@ mod age;
 
 /// Content validation and failure aggregation.
 mod content;
+/// Test-only convenience adapters over the public findings and rendering functions.
+mod evaluation;
+/// Shared findings, severity, and presentation consistency.
+mod findings;
 /// Folder discovery and recursive listing.
 mod folders;
 /// Independent run-wide check selection.
@@ -12,9 +16,17 @@ mod selection;
 /// Per-repository exclusions from execution and presentation.
 mod silencing;
 
+use super::scan::MAX_FAILURE_SAMPLES;
 use super::*;
-use crate::storage::FileEntry;
+use crate::{
+    check::selection::Selection,
+    config::RepositoryLocation,
+    storage::{FileEntry, Storage},
+};
+use anyhow::Result;
 use async_trait::async_trait;
+use chrono::{DateTime, TimeDelta, Utc};
+use evaluation::EvaluateFixture;
 use futures::{stream, stream::BoxStream};
 
 /// In-memory files with observable reads and optional access failures.

@@ -108,10 +108,10 @@ pub fn body(issues: &[String], max_age_days: u32) -> String {
     )
 }
 
-/// Format a healthy confirmation with the same scan's uncolored repository tree.
-pub fn healthy_body(tree: &str, max_age_days: u32) -> String {
+/// Format a healthy confirmation with one shared finding per line, without tree decorations.
+pub fn healthy_body(lines: &str, max_age_days: u32) -> String {
     format!(
-        "All backup repositories are healthy.\nFreshness threshold: {max_age_days} days\n\n{tree}"
+        "All backup repositories are healthy.\nFreshness threshold: {max_age_days} days\n\n{lines}\n"
     )
 }
 
@@ -127,12 +127,12 @@ mod tests {
     fn builds_plain_text_email_with_all_recipients() {
         let config = config();
         config.validate().unwrap();
-        let body = body(&["[MISSING] s3://bucket/repo".to_owned()], 7);
+        let body = body(&["s3://bucket/repo: folders: not found".to_owned()], 7);
         let message = config.message(body).unwrap();
         assert_eq!(message.envelope().to().len(), 2);
         let formatted = String::from_utf8(message.formatted()).unwrap();
         assert!(formatted.contains("Subject: Backup repository alerts"));
-        assert!(formatted.contains("[MISSING] s3://bucket/repo"));
+        assert!(formatted.contains("s3://bucket/repo: folders: not found"));
         assert!(formatted.contains("Freshness threshold: 7 days"));
     }
 

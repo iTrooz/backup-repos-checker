@@ -4,6 +4,9 @@ use std::{
     process::{Command, Output},
 };
 
+/// Check and report format the same independently evaluated findings.
+#[path = "cli/findings.rs"]
+mod findings;
 /// Config-driven repository exclusions for both CLI commands.
 #[path = "cli/silencing.rs"]
 mod silencing;
@@ -126,7 +129,7 @@ fn content_failures_appear_in_email_preview() {
     let output = check_content(206, b"WRONG", &["report", "--dry-run"], EMAIL);
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("[CONTENT CHECK FAILED] s3://test-bucket/repo"));
+    assert!(stdout.contains("s3://test-bucket/repo: content: 1 files do not match pattern"));
     assert!(stdout.contains("deep/file"));
 }
 
@@ -173,8 +176,8 @@ fn dry_run_previews_stale_and_unconfigured_entries_without_smtp() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("To: ops@example.com"));
-    assert!(stdout.contains("[STALE] s3://test-bucket/repo"));
-    assert!(stdout.contains("[UNCONFIGURED] s3://test-bucket/untracked"));
+    assert!(stdout.contains("s3://test-bucket/repo: age: latest is 2000-01-01T00:00:00"));
+    assert!(stdout.contains("s3://test-bucket/untracked: folders: unconfigured"));
     assert!(!stdout.contains("deep"));
     assert!(!stdout.contains('\x1b'));
 }
@@ -186,7 +189,7 @@ fn dry_run_reports_missing_repositories_and_exits_one() {
     assert!(
         String::from_utf8(output.stdout)
             .unwrap()
-            .contains("[MISSING] s3://test-bucket/repo")
+            .contains("s3://test-bucket/repo: folders: not found")
     );
 }
 
@@ -205,7 +208,7 @@ fn healthy_report_skips_smtp() {
     );
 }
 
-/// Healthy previews reuse one listing and include the uncolored tree without SMTP.
+/// Healthy previews reuse one listing and include findings one per line without SMTP.
 #[test]
 fn healthy_report_can_be_requested_explicitly() {
     let contents = format!(
@@ -222,7 +225,7 @@ fn healthy_report_can_be_requested_explicitly() {
     assert!(stdout.contains("Subject: Backup repositories healthy"));
     assert!(stdout.contains("All backup repositories are healthy."));
     assert!(stdout.contains("s3://test-bucket"));
-    assert!(stdout.contains("(1 files)"));
+    assert!(stdout.contains("s3://test-bucket/repo: folders: found\n"));
     assert!(!stdout.contains('\x1b'));
 }
 
@@ -230,16 +233,16 @@ fn healthy_report_can_be_requested_explicitly() {
 #[test]
 fn healthy_flag_does_not_hide_problems() {
     for (contents, code, issue) in [
-        ("", 1, "[MISSING]"),
+        ("", 1, ": folders: not found"),
         (
             "<Contents><Key>repo/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents>",
             0,
-            "[STALE]",
+            ": age: latest is ",
         ),
         (
             "<Contents><Key>repo/file</Key><LastModified>2100-01-01T00:00:00Z</LastModified></Contents><Contents><Key>unknown/file</Key><LastModified>2100-01-01T00:00:00Z</LastModified></Contents>",
             0,
-            "[UNCONFIGURED]",
+            ": folders: unconfigured",
         ),
     ] {
         let output = with_listing(
@@ -310,7 +313,7 @@ fn report_uses_nested_age_threshold() {
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("[STALE] s3://test-bucket/repo"));
+    assert!(stdout.contains("s3://test-bucket/repo: age: latest is "));
     assert!(stdout.contains("Freshness threshold: 3 days"));
 }
 
