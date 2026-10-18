@@ -14,6 +14,7 @@ async fn latest_timestamps_use_utc_seconds() {
         .unwrap();
     let now = timestamp + TimeDelta::days(8);
     let checks = Selection::default();
+
     assert_eq!(
         tree.render("s3://test", now, 7, false, checks),
         "s3://test\n└── repo  [folders: found]  [age: latest is 2026-10-18T00:07:32]  [content: no files checked] (1 files)\n"
@@ -57,6 +58,7 @@ async fn inspect_prefixes(storage: &dyn Storage, prefixes: &[String]) -> Result<
             silence_checks: &[],
         })
         .collect();
+
     inspect(storage, &repositories, Selection::default()).await
 }
 
@@ -73,7 +75,9 @@ async fn recursive_freshness_and_tree_colors() {
     ]);
     let prefixes =
         ["backups/fresh", "backups/stale", "backups/empty", "missing"].map(str::to_owned);
+
     let tree = inspect_prefixes(&storage, &prefixes).await.unwrap();
+
     let rendered = tree.render("s3://test", now, 7, true, Selection::default());
     for expected in [
         "\x1b[32mfresh",
@@ -92,6 +96,7 @@ async fn recursive_freshness_and_tree_colors() {
             .render("s3://test", now, 7, false, Selection::default())
             .contains('\x1b')
     );
+
     let issues = tree.issues("s3://test", now, 7, Selection::default());
     assert_eq!(issues.len(), 5);
     assert!(

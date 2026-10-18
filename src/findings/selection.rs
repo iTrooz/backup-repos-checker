@@ -52,6 +52,7 @@ impl Selection {
                 Kind::Content => self.content = false,
             }
         }
+
         self
     }
 

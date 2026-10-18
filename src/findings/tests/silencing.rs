@@ -35,7 +35,9 @@ async fn silencing_is_local_and_skips_execution() {
         },
     ];
     let checks = Selection::default();
+
     let tree = inspect(&storage, &repositories, checks).await.unwrap();
+
     let repo = tree.children["group"].children["silent"]
         .repository
         .as_ref()
@@ -45,11 +47,13 @@ async fn silencing_is_local_and_skips_execution() {
     assert_eq!(repo.checked_files, 0);
     assert_eq!(storage.reads.load(std::sync::atomic::Ordering::SeqCst), 0);
     assert!(!tree.failed(checks));
+
     let now = Utc::now() + TimeDelta::days(8);
     let output = tree.render("s3://test", now, 7, true, checks);
     assert!(output.contains("── silent (1 files)\n"));
     assert!(output.contains("── missing (0 files)\n"));
     assert!(output.contains("\x1b[33mactive"));
+
     let issues = tree.issues("s3://test", now, 7, checks).join("\n");
     assert!(issues.contains("s3://test/group/active: age:"));
     assert!(issues.contains("s3://test/unknown: folders: unconfigured"));
@@ -74,17 +78,21 @@ fn silencing_masks_stored_findings_in_every_output() {
         ..Folder::default()
     };
     let checks = Selection::default();
+
     let issues = tree.issues("s3://test", now, 7, checks);
     assert_eq!(issues.len(), 1);
     assert!(issues[0].contains(": content: 1 files do not match pattern"));
+
     tree.repository
         .as_mut()
         .unwrap()
         .silence_checks
         .push(Kind::Content);
+
     assert!(!tree.failed(checks));
     assert!(tree.issues("s3://test", now, 7, checks).is_empty());
     assert!(tree.content_diagnostics("s3://test", checks).is_empty());
+
     let output = tree.render("s3://test", now, 7, true, checks);
     assert!(!output.contains("[age:") && !output.contains("[content:"));
     assert!(output.contains("\x1b[32ms3://test"));

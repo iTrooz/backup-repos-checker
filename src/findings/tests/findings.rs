@@ -18,13 +18,16 @@ fn one_evaluation_drives_tree_report_and_exit_code() {
         failure_samples: vec!["bad.gz: content does not match pattern".to_owned()],
         silence_checks: vec![],
     });
+
     let results = super::super::findings(&tree, "s3://bucket", now, 7, Selection::default());
+
     assert_eq!(results.len(), 3);
     assert_eq!(results[0].severity, Severity::Passed);
     assert_eq!(results[1].check, Kind::Age);
     assert_eq!(results[1].severity, Severity::Warning);
     assert_eq!(results[2].check, Kind::Content);
     assert!(results[2].fatal);
+
     let lines: Vec<_> = results
         .iter()
         .filter(|finding| finding.is_issue())
@@ -37,16 +40,19 @@ fn one_evaluation_drives_tree_report_and_exit_code() {
             "s3://bucket/repo: content: 2 files do not match pattern: bad.gz: content does not match pattern; additional failures omitted",
         ]
     );
+
     let before = crate::check::render(&tree, "s3://bucket", &results, true);
     for finding in &results {
         assert!(before.contains(&format!("[{}: {}]", finding.check.name(), finding.message)));
     }
     assert!(before.contains("\x1b[31mrepo"));
     assert!(!before.contains("\x1b[33mrepo"));
+
     // Changing measurements cannot change presentation without explicit re-evaluation.
     let repo = tree.at("repo").repository.as_mut().unwrap();
     repo.newest = Some(now);
     repo.content_failures = 0;
+
     assert_eq!(
         before,
         crate::check::render(&tree, "s3://bucket", &results, true)
@@ -59,12 +65,15 @@ fn severity_and_exit_code_impact_are_independent() {
     let mut tree = Folder::default();
     tree.at("missing").repository = Some(Repository::default());
     tree.at("unknown/deep");
+
     let results = super::super::findings(&tree, "s3://bucket", Utc::now(), 7, Selection::default());
+
     let missing = results
         .iter()
         .find(|finding| finding.uri.ends_with("/missing"))
         .unwrap();
     assert!(missing.is_issue() && missing.fatal);
+
     for finding in results
         .iter()
         .filter(|finding| finding.uri.contains("/unknown"))
@@ -73,6 +82,7 @@ fn severity_and_exit_code_impact_are_independent() {
         assert!(finding.is_issue());
         assert!(!finding.fatal);
     }
+
     let output = crate::check::render(&tree, "s3://bucket", &results, true);
     assert!(output.contains("\x1b[31;4mmissing"));
     assert!(output.contains("\x1b[31munknown"));

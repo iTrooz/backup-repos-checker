@@ -48,6 +48,7 @@ impl TryFrom<ContentConfig> for ContentCheck {
             !config.rules.is_empty(),
             "content_check requires at least one rule"
         );
+
         let rules = config
             .rules
             .into_iter()
@@ -57,14 +58,17 @@ impl TryFrom<ContentConfig> for ContentCheck {
                     .build()
                     .with_context(|| format!("invalid content-check glob {:?}", rule.glob))?
                     .compile_matcher();
+
                 let pattern = RegexBuilder::new(&rule.pattern)
                     .unicode(false)
                     .dot_matches_new_line(true)
                     .build()
                     .with_context(|| format!("invalid byte pattern {:?}", rule.pattern))?;
+
                 Ok(Rule { glob, pattern })
             })
             .collect::<Result<Vec<_>>>()?;
+
         Ok(Self { rules })
     }
 }
@@ -81,10 +85,12 @@ impl ContentCheck {
         let Some(rule) = self.rules.iter().find(|rule| rule.glob.is_match(relative)) else {
             return Ok(None);
         };
+
         let bytes = storage
             .read_prefix(key, PREFIX_BYTES)
             .await
             .with_context(|| format!("cannot read content prefix of {key:?}"))?;
+
         Ok((!rule
             .pattern
             .is_match(&bytes[..bytes.len().min(PREFIX_BYTES)]))
@@ -134,6 +140,7 @@ mod tests {
     async fn binary_patterns_support_alternatives_and_newline_wildcards() {
         let check = rules("**/*.gz", r"^(\x1f\x8b\x08|MAGIC).{2}\xff");
         let bytes = Bytes(vec![0x1f, 0x8b, 0x08, b'\n', 0, 0xff]);
+
         assert!(
             check
                 .check(&bytes, "repo/nested/file.gz", "nested/file.gz")
@@ -141,6 +148,7 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+
         assert!(
             check
                 .check(&Bytes(b"MAGIC\n\0\xff".to_vec()), "file.gz", "file.gz")
@@ -163,6 +171,7 @@ mod tests {
                     .is_some()
             );
         }
+
         assert_eq!(
             check
                 .check(&Bytes(vec![]), "file.zip", "file.zip")
@@ -187,6 +196,7 @@ mod tests {
                 .is_err()
             );
         }
+
         assert!(ContentCheck::try_from(ContentConfig { rules: vec![] }).is_err());
     }
 
@@ -206,6 +216,7 @@ mod tests {
             ],
         })
         .unwrap();
+
         assert!(
             check
                 .check(&Bytes(b"OTHER".to_vec()), "special", "special")
@@ -213,9 +224,11 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+
         let check = rules("**", "MAGIC");
         let mut bytes = vec![0; PREFIX_BYTES];
         bytes.extend_from_slice(b"MAGIC");
+
         assert!(
             check
                 .check(&Bytes(bytes), "file", "file")

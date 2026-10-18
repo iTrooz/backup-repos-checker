@@ -5,14 +5,19 @@ mod age;
 
 /// Content validation and failure aggregation.
 mod content;
+
 /// Test-only convenience adapters over the public findings and rendering functions.
 mod evaluation;
+
 /// Shared findings, severity, and presentation consistency.
 mod findings;
+
 /// Folder discovery and recursive listing.
 mod folders;
+
 /// Independent run-wide check selection.
 mod selection;
+
 /// Per-repository exclusions from execution and presentation.
 mod silencing;
 
@@ -55,6 +60,7 @@ impl Storage for TestStorage {
         if self.fail_reads {
             anyhow::bail!("access denied");
         }
+
         assert_eq!(length, super::content::PREFIX_BYTES);
         Ok(self.files[path].iter().copied().take(length).collect())
     }

@@ -23,6 +23,7 @@ impl Repository {
     pub fn findings(&self, uri: &str, cutoff: DateTime<Utc>, checks: Selection) -> Vec<Finding> {
         let checks = checks.without(&self.silence_checks);
         let mut results = Vec::new();
+
         if checks.folders {
             results.push(Finding::new(
                 uri,
@@ -36,16 +37,19 @@ impl Repository {
                 !self.exists,
             ));
         }
+
         // Missing repositories have no age or content measurements to evaluate.
         if !self.exists {
             return results;
         }
+
         if checks.age {
             let fresh = self.newest.is_some_and(|modified| modified >= cutoff);
             let message = self.newest.map_or_else(
                 || "no files".to_owned(),
                 |timestamp| format!("latest is {}", timestamp.format("%Y-%m-%dT%H:%M:%S")),
             );
+
             results.push(Finding::new(
                 uri,
                 Kind::Age,
@@ -58,6 +62,7 @@ impl Repository {
                 false,
             ));
         }
+
         if checks.content {
             let failed = self.content_failures > 0;
             let (severity, message) = if failed {
@@ -70,6 +75,7 @@ impl Repository {
             } else {
                 (Severity::Neutral, "no files checked".to_owned())
             };
+
             let mut finding = Finding::new(uri, Kind::Content, severity, message, failed);
             if failed {
                 finding.details = self.failure_samples.clone();
@@ -79,8 +85,10 @@ impl Repository {
                         .push("additional failures omitted".to_owned());
                 }
             }
+
             results.push(finding);
         }
+
         results
     }
 }

@@ -16,9 +16,11 @@ impl Folder {
     /// Create missing ancestors, ignoring empty path components, and return the node.
     pub(super) fn at(&mut self, path: &str) -> &mut Self {
         let mut folder = self;
+
         for component in path.split('/').filter(|part| !part.is_empty()) {
             folder = folder.children.entry(component.to_owned()).or_default();
         }
+
         folder
     }
 
@@ -26,6 +28,7 @@ impl Folder {
     pub(super) fn count_file(&mut self, path: &str) {
         self.file_count += 1;
         let mut folder = self;
+
         for component in path.split('/').filter(|part| !part.is_empty()) {
             folder = folder.children.entry(component.to_owned()).or_default();
             folder.file_count += 1;

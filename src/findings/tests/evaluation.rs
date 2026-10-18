@@ -13,10 +13,13 @@ pub(super) trait EvaluateFixture {
         color: bool,
         checks: Selection,
     ) -> String;
+
     /// Format actionable results for assertion convenience.
     fn issues(&self, uri: &str, now: DateTime<Utc>, days: u32, checks: Selection) -> Vec<String>;
+
     /// Inspect the shared findings' exit-code impact.
     fn failed(&self, checks: Selection) -> bool;
+
     /// Select content errors from shared findings for assertion convenience.
     fn content_diagnostics(&self, uri: &str, checks: Selection) -> Vec<String>;
 }

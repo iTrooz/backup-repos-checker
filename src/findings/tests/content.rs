@@ -27,15 +27,19 @@ async fn content_checks_are_recursive_and_skip_unmatched_files() {
         content_check: Some(&content_check),
         silence_checks: &[],
     }];
+
     let tree = inspect(&storage, &repositories, Selection::default())
         .await
         .unwrap();
+
     assert!(tree.failed(Selection::default()));
     assert_eq!(storage.reads.load(std::sync::atomic::Ordering::SeqCst), 3);
+
     let rendered = tree.render("s3://test", Utc::now(), 7, true, Selection::default());
     assert!(rendered.contains("\x1b[31mrepo"));
     assert!(rendered.contains("[content: 2 files do not match pattern]"));
     assert!(!rendered.contains("bad.gz"));
+
     let issues = tree
         .issues("s3://test", Utc::now(), 7, Selection::default())
         .join("\n");
@@ -65,7 +69,9 @@ async fn unmatched_files_are_accepted_without_downloads() {
         silence_checks: &[],
     }];
     let checks = Selection::default();
+
     let tree = inspect(&storage, &repositories, checks).await.unwrap();
+
     assert!(!tree.failed(checks));
     assert!(tree.content_diagnostics("s3://test", checks).is_empty());
     assert_eq!(storage.reads.load(std::sync::atomic::Ordering::SeqCst), 0);
@@ -87,10 +93,13 @@ async fn checks_every_file_but_bounds_failure_details() {
         content_check: Some(&content_check),
         silence_checks: &[],
     }];
+
     let tree = inspect(&storage, &repositories, Selection::default())
         .await
         .unwrap();
+
     assert_eq!(storage.reads.load(std::sync::atomic::Ordering::SeqCst), 27);
+
     let repo = tree.repository.as_ref().unwrap();
     assert_eq!(repo.content_failures, 27);
     assert_eq!(repo.failure_samples.len(), MAX_FAILURE_SAMPLES);
@@ -114,6 +123,7 @@ async fn content_access_failures_are_execution_errors() {
         content_check: Some(&content_check),
         silence_checks: &[],
     }];
+
     assert!(
         inspect(&storage, &repositories, Selection::default())
             .await

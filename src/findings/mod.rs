@@ -2,12 +2,16 @@
 
 /// Repository-specific byte-pattern validation.
 pub mod content;
+
 /// Structural inventory tree shared by scanning and evaluation.
 mod folder;
+
 /// Repository measurements and check conditions.
 mod repository;
+
 /// Recursive storage inspection.
 mod scan;
+
 /// Shared check identities, execution selection, and repository exclusions.
 pub mod selection;
 
@@ -66,9 +70,11 @@ impl Finding {
     /// Format one report line, preserving bounded diagnostic details when present.
     pub fn line(&self) -> String {
         let mut line = format!("{}: {}: {}", self.uri, self.check.name(), self.message);
+
         if !self.details.is_empty() {
             line.push_str(&format!(": {}", self.details.join("; ")));
         }
+
         line
     }
 }
@@ -89,6 +95,7 @@ pub fn findings(
         checks,
         &mut results,
     );
+
     results
 }
 
@@ -104,6 +111,7 @@ fn collect(
         results.extend(repository.findings(uri, cutoff, checks));
         return;
     }
+
     if checks.folders && !tree.has_repository() {
         results.push(Finding::new(
             uri,
@@ -113,6 +121,7 @@ fn collect(
             false,
         ));
     }
+
     // Report descendants even when their parent will be collapsed in the displayed tree.
     for (name, child) in &tree.children {
         collect(child, &format!("{uri}/{name}"), cutoff, checks, results);
