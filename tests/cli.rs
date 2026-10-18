@@ -201,6 +201,87 @@ fn healthy_report_skips_smtp() {
     );
 }
 
+/// Healthy previews reuse one listing and include the uncolored tree without SMTP.
+#[test]
+fn healthy_report_can_be_requested_explicitly() {
+    let contents = format!(
+        "<Contents><Key>repo/file</Key><LastModified>{}</LastModified></Contents>",
+        chrono::Utc::now().to_rfc3339(),
+    );
+    let output = with_listing(
+        &contents,
+        &["report", "--send-even-if-healthy", "--dry-run"],
+        EMAIL,
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Subject: Backup repositories healthy"));
+    assert!(stdout.contains("All backup repositories are healthy."));
+    assert!(stdout.contains("s3://test-bucket"));
+    assert!(stdout.contains("(1 files)"));
+    assert!(!stdout.contains('\x1b'));
+}
+
+/// The new flag preserves alerts for missing, stale, or unconfigured entries.
+#[test]
+fn healthy_flag_does_not_hide_problems() {
+    for (contents, code, issue) in [
+        ("", 1, "[MISSING]"),
+        (
+            "<Contents><Key>repo/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents>",
+            0,
+            "[STALE]",
+        ),
+        (
+            "<Contents><Key>repo/file</Key><LastModified>2100-01-01T00:00:00Z</LastModified></Contents><Contents><Key>unknown/file</Key><LastModified>2100-01-01T00:00:00Z</LastModified></Contents>",
+            0,
+            "[UNCONFIGURED]",
+        ),
+    ] {
+        let output = with_listing(
+            contents,
+            &["report", "--send-even-if-healthy", "--dry-run"],
+            EMAIL,
+        );
+        assert_eq!(output.status.code(), Some(code), "{output:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("Subject: Backup repository alerts"));
+        assert!(stdout.contains(issue));
+        assert!(!stdout.contains("All backup repositories are healthy."));
+    }
+}
+
+/// Non-preview healthy reports attempt SMTP delivery and propagate delivery errors.
+#[test]
+fn healthy_report_attempts_smtp_delivery() {
+    let contents = format!(
+        "<Contents><Key>repo/file</Key><LastModified>{}</LastModified></Contents>",
+        chrono::Utc::now().to_rfc3339(),
+    );
+    let output = with_listing(&contents, &["report", "--send-even-if-healthy"], EMAIL);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("cannot send report email")
+    );
+}
+
+/// A failed inventory must never produce a healthy confirmation.
+#[test]
+fn healthy_flag_does_not_report_after_scan_errors() {
+    let output = with_s3_responses(
+        vec![(
+            200,
+            b"<ListBucketResult><IsTruncated>true</IsTruncated></ListBucketResult>".to_vec(),
+        )],
+        &["report", "--send-even-if-healthy", "--dry-run"],
+        EMAIL,
+    );
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(output.stdout.is_empty());
+}
+
 #[test]
 fn report_uses_nested_age_threshold() {
     let contents = format!(

@@ -1,3 +1,5 @@
+//! Build alert and healthy confirmation emails and deliver them over verified SMTP TLS.
+
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail, ensure};
@@ -50,14 +52,20 @@ impl EmailConfig {
         Ok(())
     }
 
+    /// Build an alert using the configured subject.
     pub fn message(&self, body: String) -> Result<Message> {
+        self.message_with_subject(body, &self.subject)
+    }
+
+    /// Build either an alert or healthy confirmation with the chosen subject.
+    pub fn message_with_subject(&self, body: String, subject: &str) -> Result<Message> {
         ensure!(
             !self.to.is_empty(),
             "email.to must contain at least one recipient"
         );
         let mut message = Message::builder()
             .from(self.from.parse().context("invalid email.from address")?)
-            .subject(&self.subject);
+            .subject(subject);
         for recipient in &self.to {
             message = message.to(recipient.parse().context("invalid email.to address")?);
         }
@@ -104,6 +112,13 @@ pub fn body(issues: &[String], max_age_days: u32) -> String {
         "Backup repository report\nFreshness threshold: {max_age_days} days\n{} problematic entries:\n\n{}\n",
         issues.len(),
         issues.join("\n"),
+    )
+}
+
+/// Format a healthy confirmation with the same scan's uncolored repository tree.
+pub fn healthy_body(tree: &str, max_age_days: u32) -> String {
+    format!(
+        "All backup repositories are healthy.\nFreshness threshold: {max_age_days} days\n\n{tree}"
     )
 }
 

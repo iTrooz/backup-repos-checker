@@ -35,11 +35,14 @@ enum Command {
         )]
         checks: Vec<Kind>,
     },
-    /// Email red and yellow entries; requires an [email] section in config.toml.
+    /// Email findings, optionally including healthy results; requires [email] configuration.
     Report {
         /// Print the email without connecting to SMTP or sending it.
         #[arg(long)]
         dry_run: bool,
+        /// Send a confirmation email even when all repositories are healthy.
+        #[arg(long)]
+        send_even_if_healthy: bool,
     },
 }
 
@@ -101,26 +104,46 @@ async fn run(cli: Cli) -> Result<bool> {
                 }
             }
         }
-        Command::Report { dry_run } => {
+        Command::Report {
+            dry_run,
+            send_even_if_healthy,
+        } => {
             let issues: Vec<_> = trees
                 .iter()
                 .flat_map(|(bucket, tree)| {
                     tree.issues(&format!("s3://{bucket}"), now, max_age_days, checks)
                 })
                 .collect();
-            if issues.is_empty() {
+            if issues.is_empty() && !send_even_if_healthy {
                 println!("No red or yellow entries; no email sent.");
             } else {
                 let email = email.expect("report configuration validated");
-                let body = report::body(&issues, max_age_days);
-                let message = email.message(body.clone())?;
+                // Reuse this run's complete findings for either an alert or a healthy confirmation.
+                let healthy = issues.is_empty();
+                let subject = if healthy {
+                    "Backup repositories healthy"
+                } else {
+                    &email.subject
+                };
+                let body = if healthy {
+                    let tree = trees
+                        .iter()
+                        .map(|(bucket, tree)| {
+                            tree.render(&format!("s3://{bucket}"), now, max_age_days, false, checks)
+                        })
+                        .collect::<String>();
+                    report::healthy_body(&tree, max_age_days)
+                } else {
+                    report::body(&issues, max_age_days)
+                };
+                let message = email.message_with_subject(body.clone(), subject)?;
                 if dry_run {
                     // Preview readable text, not MIME-encoded content or credentials.
                     println!(
                         "From: {}\nTo: {}\nSubject: {}\n\n{body}",
                         email.from,
                         email.to.join(", "),
-                        email.subject
+                        subject
                     );
                 } else {
                     email.send(message).await?;
