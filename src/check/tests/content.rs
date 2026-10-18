@@ -2,9 +2,9 @@
 
 use super::*;
 
-/// Match recursively, ignore markers, and fail unmatched or invalid files.
+/// Match recursively, skip unmatched files and markers, and reject invalid matching files.
 #[tokio::test]
-async fn content_checks_are_recursive_and_fail_closed() {
+async fn content_checks_are_recursive_and_skip_unmatched_files() {
     let storage = TestStorage {
         files: [
             ("repo/root.gz", vec![0x1f, 0x8b, 0x08]),
@@ -33,16 +33,40 @@ async fn content_checks_are_recursive_and_fail_closed() {
     assert_eq!(storage.reads.load(std::sync::atomic::Ordering::SeqCst), 3);
     let rendered = tree.render("s3://test", Utc::now(), 7, true, Selection::default());
     assert!(rendered.contains("\x1b[31mrepo"));
-    assert!(rendered.contains("[content: 3 files do not match pattern]"));
+    assert!(rendered.contains("[content: 2 files do not match pattern]"));
     assert!(!rendered.contains("bad.gz"));
     let issues = tree
         .issues("s3://test", Utc::now(), 7, Selection::default())
         .join("\n");
     assert!(issues.contains("[CONTENT CHECK FAILED] s3://test/repo"));
     assert!(issues.contains("deep/bad.gz"));
-    assert!(issues.contains("no matching content rule"));
+    assert!(!issues.contains("unmatched.txt"));
     assert!(!issues.contains("root.gz"));
     assert!(!issues.contains("[STALE]"));
+}
+
+/// Unmatched files succeed even when downloading them would fail.
+#[tokio::test]
+async fn unmatched_files_are_accepted_without_downloads() {
+    let storage = TestStorage {
+        files: [
+            ("repo/.resource/blob".to_owned(), vec![]),
+            ("repo/info.json".to_owned(), vec![]),
+        ]
+        .into(),
+        reads: 0.into(),
+        fail_reads: true,
+    };
+    let content_check = toml::from_str("[[rules]]\nglob = '**/*.md'\npattern = '^id: '").unwrap();
+    let repositories = [RepositoryLocation {
+        prefix: "repo",
+        content_check: Some(&content_check),
+    }];
+    let checks = Selection::default();
+    let tree = inspect(&storage, &repositories, checks).await.unwrap();
+    assert!(!tree.failed(checks));
+    assert!(tree.content_diagnostics("s3://test", checks).is_empty());
+    assert_eq!(storage.reads.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
 
 /// Continue checking all files while capping diagnostic samples.

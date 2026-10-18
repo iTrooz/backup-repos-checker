@@ -70,7 +70,7 @@ impl TryFrom<ContentConfig> for ContentCheck {
 }
 
 impl ContentCheck {
-    /// The first matching rule wins. Every non-marker file must match a rule.
+    /// The first matching rule wins; unmatched files are accepted without downloading.
     /// A returned string is a validation failure; storage errors remain errors.
     pub async fn check(
         &self,
@@ -79,7 +79,7 @@ impl ContentCheck {
         relative: &str,
     ) -> Result<Option<String>> {
         let Some(rule) = self.rules.iter().find(|rule| rule.glob.is_match(relative)) else {
-            return Ok(Some("no matching content rule".to_owned()));
+            return Ok(None);
         };
         let bytes = storage
             .read_prefix(key, PREFIX_BYTES)
@@ -150,9 +150,9 @@ mod tests {
         );
     }
 
-    /// Incomplete prefixes and files without matching rules fail validation.
+    /// Matching files reject incomplete prefixes; unmatched files are accepted without reads.
     #[tokio::test]
-    async fn rejects_short_empty_and_unmatched_files() {
+    async fn rejects_invalid_matching_files_but_accepts_unmatched_files() {
         let check = rules("**/*.gz", r"^\x1f\x8b\x08");
         for bytes in [vec![], vec![0x1f], b"bad".to_vec()] {
             assert!(
@@ -169,7 +169,7 @@ mod tests {
                 .await
                 .unwrap()
                 .as_deref(),
-            Some("no matching content rule")
+            None
         );
     }
 
