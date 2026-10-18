@@ -18,10 +18,12 @@ use crate::{
     storage::Storage,
 };
 
-// Bound scan work and retained diagnostics independently of the content validator.
+/// Maximum in-flight entry checks, including any required prefix downloads.
 const CHECK_CONCURRENCY: usize = 8;
+/// Maximum offending-path samples retained per repository, not a limit on checks.
 const MAX_FAILURE_SAMPLES: usize = 10;
 
+/// Aggregated findings; absent timestamps and zero checks can also mean not run.
 #[derive(Debug, Default)]
 struct Repository {
     exists: bool,
@@ -46,6 +48,7 @@ struct RenderOptions {
     checks: Selection,
 }
 
+/// Combined display status; Fresh can mean passed non-age checks, not recent files.
 #[derive(Clone, Copy)]
 enum Status {
     Fresh,
@@ -57,7 +60,7 @@ enum Status {
 }
 
 impl Folder {
-    /// Create missing ancestors and return the node at the requested path.
+    /// Create missing ancestors, ignoring empty path components, and return the node.
     fn at(&mut self, path: &str) -> &mut Self {
         let mut folder = self;
         for component in path.split('/').filter(|part| !part.is_empty()) {
@@ -66,18 +69,19 @@ impl Folder {
         folder
     }
 
+    /// Whether this node or any descendant is a configured repository.
     fn has_repository(&self) -> bool {
         self.repository.is_some() || self.children.values().any(Self::has_repository)
     }
 
-    /// Only enabled folder and content failures affect the health exit code.
+    /// Fail for enabled missing-repository or content checks, not stale/unconfigured folders.
     pub fn failed(&self, checks: Selection) -> bool {
         self.repository.as_ref().is_some_and(|repo| {
             (checks.folders && !repo.exists) || (checks.content && repo.content_failures > 0)
         }) || self.children.values().any(|child| child.failed(checks))
     }
 
-    /// Keep skipped checks neutral rather than claiming they passed or failed.
+    /// Prioritize missing repositories, content failures, then age; ignore disabled checks.
     fn status(&self, cutoff: DateTime<Utc>, checks: Selection) -> Status {
         match &self.repository {
             Some(repo) if !repo.exists => {
@@ -104,7 +108,7 @@ impl Folder {
         }
     }
 
-    /// Evaluate stored findings using the run-wide check selection.
+    /// Return report findings for enabled checks, including stale and unconfigured folders.
     pub fn issues(
         &self,
         path: &str,
@@ -140,7 +144,8 @@ impl Folder {
         })
     }
 
-    /// Return bounded content diagnostics only when content checks are enabled.
+    /// Return all repositories' content failures with bounded samples per repository.
+    /// Return no diagnostics when the content check is disabled.
     pub fn content_diagnostics(&self, path: &str, checks: Selection) -> Vec<String> {
         if !checks.content {
             return Vec::new();
@@ -152,7 +157,7 @@ impl Folder {
         issues
     }
 
-    /// Collect only enabled findings for reports and diagnostics.
+    /// Collect enabled issues, traversing unconfigured branches but stopping at repositories.
     fn collect_issues(
         &self,
         path: &str,
@@ -193,7 +198,7 @@ impl Folder {
         }
     }
 
-    /// Render results without storing run-wide selection or formatting on tree nodes.
+    /// Render the tree with per-check details, optional color, and UTC timestamps to seconds.
     pub fn render(
         &self,
         name: &str,
@@ -235,7 +240,7 @@ impl Folder {
             Status::Unconfigured => "31",
             Status::Group => "",
         };
-        // Label each enabled check independently; unavailable findings stay explicit.
+        // Label enabled checks; missing repositories omit age/content, and zero checks are explicit.
         let mut detail = String::new();
         if let Some(repo) = &self.repository {
             if options.checks.folders {
@@ -304,7 +309,8 @@ impl Folder {
     }
 }
 
-/// List every repository, downloading prefixes only when content is selected.
+/// Scan the storage inventory and aggregate configured repositories' findings.
+/// Download prefixes only for files with a matching rule when content is enabled.
 pub async fn inspect(
     storage: &dyn Storage,
     repositories: &[RepositoryLocation<'_>],
@@ -349,7 +355,7 @@ pub async fn inspect(
             Ok::<_, anyhow::Error>((entry, repository, checked, failure))
         })
         .buffered(CHECK_CONCURRENCY);
-    // Merge completed checks into collapsed repository nodes, propagating storage errors.
+    // Aggregate entries into repository findings, propagating listing and content-read errors.
     while let Some((entry, repository, checked, failure)) = inspected.try_next().await? {
         let marker = entry.path.ends_with('/');
         if let Some(repository) = repository {
@@ -369,7 +375,7 @@ pub async fn inspect(
                     repo.failure_samples.push(failure);
                 }
             }
-            // Directory-marker timestamps establish existence, not backup freshness.
+            // Directory markers establish existence, but their timestamps do not count for age.
             if checks.age && !marker {
                 repo.newest = Some(
                     repo.newest
