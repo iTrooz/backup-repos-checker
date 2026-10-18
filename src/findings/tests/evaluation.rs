@@ -34,7 +34,13 @@ impl EvaluateFixture for Folder {
         color: bool,
         checks: Selection,
     ) -> String {
-        crate::check::render(self, uri, &findings(self, uri, now, days, checks), color)
+        crate::check::render(
+            self,
+            uri,
+            &findings(self, uri, now, days, checks),
+            color,
+            true,
+        )
     }
 
     /// Format only actionable findings, matching alert report selection.

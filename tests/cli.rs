@@ -4,6 +4,9 @@ use std::{
     process::{Command, Output},
 };
 
+/// Informational tree details are opt-in without changing check execution.
+#[path = "cli/display.rs"]
+mod display;
 /// Check and report format the same independently evaluated findings.
 #[path = "cli/findings.rs"]
 mod findings;
@@ -102,7 +105,7 @@ fn check_content(status: u16, bytes: &[u8], args: &[&str], extra: &str) -> Outpu
 /// Content validation accepts matching prefixes and reports mismatches.
 #[test]
 fn check_accepts_valid_content_and_rejects_invalid_content() {
-    let output = check_content(206, b"MAGIC123", &["check"], "");
+    let output = check_content(206, b"MAGIC123", &["check", "--all"], "");
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(
         String::from_utf8(output.stdout)
@@ -370,7 +373,7 @@ fn stale_and_unconfigured_folders_exit_successfully() {
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("repo  [folders: found]  [age: latest is "));
+    assert!(stdout.contains("repo  [age: latest is "));
     assert!(stdout.contains("untracked"));
     assert!(!stdout.contains("deep"));
     assert!(!stdout.contains('\x1b'));
@@ -441,7 +444,7 @@ fn content_selection_preserves_validation_failures() {
         "folders,age,content",
         "content,content",
     ] {
-        let output = check_content(206, b"WRONG", &["check", "--checks", checks], "");
+        let output = check_content(206, b"WRONG", &["check", "--all", "--checks", checks], "");
         assert_eq!(output.status.code(), Some(1), "{checks}: {output:?}");
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(stdout.contains("[content: 1 files do not match pattern]"));

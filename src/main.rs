@@ -27,6 +27,9 @@ struct Cli {
 enum Command {
     /// Display configured repositories and unconfigured folders using ./config.toml.
     Check {
+        /// Include informational check details, not only issues.
+        #[arg(long, short = 'A')]
+        all: bool,
         /// Comma-separated checks to run: folders, age, content.
         #[arg(
             long,
@@ -63,7 +66,7 @@ async fn main() -> ExitCode {
 /// Run the selected checks, keeping reports on the full default selection.
 async fn run(cli: Cli) -> Result<bool> {
     let checks = match &cli.command {
-        Command::Check { checks } => Selection::from_kinds(checks),
+        Command::Check { checks, .. } => Selection::from_kinds(checks),
         Command::Report { .. } => Selection::default(),
     };
     let text = std::fs::read_to_string("config.toml").context("cannot read ./config.toml")?;
@@ -98,14 +101,14 @@ async fn run(cli: Cli) -> Result<bool> {
         .collect();
     let failed = findings.iter().any(|finding| finding.fatal);
     match cli.command {
-        Command::Check { .. } => {
+        Command::Check { all, .. } => {
             let color = io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
             let mut stdout = io::stdout().lock();
             for (bucket, tree) in trees {
                 write!(
                     stdout,
                     "{}",
-                    check::render(&tree, &format!("s3://{bucket}"), &findings, color)
+                    check::render(&tree, &format!("s3://{bucket}"), &findings, color, all)
                 )?;
             }
             // Preserve offending-file diagnostics, formatting the same findings rather than rechecking.

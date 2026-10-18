@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 
 use crate::findings::{Finding, Folder, Severity, selection::Kind};
 
-/// Render a tree using exactly the findings used for reports and exit codes.
-pub fn render(tree: &Folder, uri: &str, findings: &[Finding], color: bool) -> String {
+/// Render shared findings, hiding informational brackets unless all details are requested.
+pub fn render(tree: &Folder, uri: &str, findings: &[Finding], color: bool, all: bool) -> String {
     let mut by_uri: BTreeMap<&str, Vec<&Finding>> = BTreeMap::new();
     for finding in findings {
         by_uri.entry(&finding.uri).or_default().push(finding);
@@ -17,7 +17,7 @@ pub fn render(tree: &Folder, uri: &str, findings: &[Finding], color: bool) -> St
         uri,
         "",
         None,
-        &RenderOptions { by_uri, color },
+        &RenderOptions { by_uri, color, all },
         &mut output,
     );
     output
@@ -27,6 +27,7 @@ pub fn render(tree: &Folder, uri: &str, findings: &[Finding], color: bool) -> St
 struct RenderOptions<'a> {
     by_uri: BTreeMap<&'a str, Vec<&'a Finding>>,
     color: bool,
+    all: bool,
 }
 
 /// Format one node and collapse repositories and folders with unconfigured findings.
@@ -65,6 +66,7 @@ fn render_into(
     };
     let mut detail = findings
         .iter()
+        .filter(|finding| options.all || finding.is_issue())
         .map(|finding| format!("  [{}: {}]", finding.check.name(), finding.message))
         .collect::<String>();
     let collapsed = tree.repository.is_some() || unconfigured;

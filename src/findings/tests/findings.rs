@@ -41,12 +41,17 @@ fn one_evaluation_drives_tree_report_and_exit_code() {
         ]
     );
 
-    let before = crate::check::render(&tree, "s3://bucket", &results, true);
+    let before = crate::check::render(&tree, "s3://bucket", &results, true, true);
     for finding in &results {
         assert!(before.contains(&format!("[{}: {}]", finding.check.name(), finding.message)));
     }
     assert!(before.contains("\x1b[31mrepo"));
     assert!(!before.contains("\x1b[33mrepo"));
+
+    let issues_only = crate::check::render(&tree, "s3://bucket", &results, true, false);
+    assert!(issues_only.contains("\x1b[31mrepo"));
+    assert!(issues_only.contains("[age:") && issues_only.contains("[content:"));
+    assert!(!issues_only.contains("[folders: found]"));
 
     // Changing measurements cannot change presentation without explicit re-evaluation.
     let repo = tree.at("repo").repository.as_mut().unwrap();
@@ -55,7 +60,7 @@ fn one_evaluation_drives_tree_report_and_exit_code() {
 
     assert_eq!(
         before,
-        crate::check::render(&tree, "s3://bucket", &results, true)
+        crate::check::render(&tree, "s3://bucket", &results, true, true)
     );
 }
 
@@ -83,7 +88,7 @@ fn severity_and_exit_code_impact_are_independent() {
         assert!(!finding.fatal);
     }
 
-    let output = crate::check::render(&tree, "s3://bucket", &results, true);
+    let output = crate::check::render(&tree, "s3://bucket", &results, true, true);
     assert!(output.contains("\x1b[31;4mmissing"));
     assert!(output.contains("\x1b[31munknown"));
     assert!(!output.contains("deep"));
