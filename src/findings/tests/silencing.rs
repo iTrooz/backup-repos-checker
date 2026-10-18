@@ -1,7 +1,7 @@
 //! Repository-local exclusions must apply independently of the run-wide selection.
 
 use super::*;
-use crate::check::selection::Kind;
+use crate::findings::selection::Kind;
 
 /// Skip work and presentation only for the silenced repository; preserve counts and siblings.
 #[tokio::test]

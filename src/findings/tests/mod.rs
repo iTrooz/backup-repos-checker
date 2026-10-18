@@ -19,8 +19,8 @@ mod silencing;
 use super::scan::MAX_FAILURE_SAMPLES;
 use super::*;
 use crate::{
-    check::selection::Selection,
     config::RepositoryLocation,
+    findings::selection::Selection,
     storage::{FileEntry, Storage},
 };
 use anyhow::Result;
@@ -28,6 +28,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use evaluation::EvaluateFixture;
 use futures::{stream, stream::BoxStream};
+use std::collections::BTreeMap;
 
 /// In-memory files with observable reads and optional access failures.
 struct TestStorage {

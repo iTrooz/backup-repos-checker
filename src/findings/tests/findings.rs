@@ -1,7 +1,7 @@
 //! Shared evaluation is the only source of check messages and behavioral decisions.
 
 use super::*;
-use crate::check::{findings::Severity, selection::Kind};
+use crate::findings::{Severity, selection::Kind};
 
 /// Independent checks retain simultaneous findings, and rendering never evaluates them again.
 #[test]
@@ -37,7 +37,7 @@ fn one_evaluation_drives_tree_report_and_exit_code() {
             "s3://bucket/repo: content: 2 files do not match pattern: bad.gz: content does not match pattern; additional failures omitted",
         ]
     );
-    let before = super::super::render(&tree, "s3://bucket", &results, true);
+    let before = crate::check::render(&tree, "s3://bucket", &results, true);
     for finding in &results {
         assert!(before.contains(&format!("[{}: {}]", finding.check.name(), finding.message)));
     }
@@ -49,7 +49,7 @@ fn one_evaluation_drives_tree_report_and_exit_code() {
     repo.content_failures = 0;
     assert_eq!(
         before,
-        super::super::render(&tree, "s3://bucket", &results, true)
+        crate::check::render(&tree, "s3://bucket", &results, true)
     );
 }
 
@@ -73,7 +73,7 @@ fn severity_and_exit_code_impact_are_independent() {
         assert!(finding.is_issue());
         assert!(!finding.fatal);
     }
-    let output = super::super::render(&tree, "s3://bucket", &results, true);
+    let output = crate::check::render(&tree, "s3://bucket", &results, true);
     assert!(output.contains("\x1b[31;4mmissing"));
     assert!(output.contains("\x1b[31munknown"));
     assert!(!output.contains("deep"));

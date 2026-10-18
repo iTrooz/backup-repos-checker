@@ -37,17 +37,17 @@ impl Default for AgeCheckConfig {
 #[serde(deny_unknown_fields)]
 pub struct RepositoryConfig {
     pub uri: String,
-    pub content_check: Option<crate::check::content::ContentCheck>,
+    pub content_check: Option<crate::findings::content::ContentCheck>,
     #[serde(default)]
-    pub silence_checks: Vec<crate::check::selection::Kind>,
+    pub silence_checks: Vec<crate::findings::selection::Kind>,
 }
 
 /// Borrowed repository settings for scanning one bucket.
 #[derive(Clone, Copy)]
 pub struct RepositoryLocation<'a> {
     pub prefix: &'a str,
-    pub content_check: Option<&'a crate::check::content::ContentCheck>,
-    pub silence_checks: &'a [crate::check::selection::Kind],
+    pub content_check: Option<&'a crate::findings::content::ContentCheck>,
+    pub silence_checks: &'a [crate::findings::selection::Kind],
 }
 
 impl Config {
@@ -232,7 +232,7 @@ mod tests {
         ))
         .unwrap();
         let buckets = config.buckets().unwrap();
-        let active = crate::check::selection::Selection::default()
+        let active = crate::findings::selection::Selection::default()
             .without(buckets["bucket"][0].silence_checks);
         assert!(!active.folders && !active.age && !active.content);
         for invalid in ["['unknown']", "['Age']", "'age'", "[1]"] {

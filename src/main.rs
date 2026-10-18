@@ -2,6 +2,7 @@
 
 mod check;
 mod config;
+mod findings;
 mod report;
 mod storage;
 
@@ -11,9 +12,9 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use check::selection::{Kind, Selection};
 use chrono::Utc;
 use clap::{Parser, Subcommand};
+use findings::selection::{Kind, Selection};
 
 #[derive(Parser)]
 #[command(version, about = "Check backup repository activity in S3")]
@@ -81,7 +82,7 @@ async fn run(cli: Cli) -> Result<bool> {
     let mut trees = Vec::new();
     for (bucket, prefixes) in config.buckets()? {
         let storage = storage::S3Storage::new(&config, &bucket)?;
-        let tree = check::inspect(&storage, &prefixes, checks)
+        let tree = findings::inspect(&storage, &prefixes, checks)
             .await
             .with_context(|| format!("cannot check s3://{bucket}"))?;
         trees.push((bucket, tree));
@@ -92,7 +93,7 @@ async fn run(cli: Cli) -> Result<bool> {
     let findings: Vec<_> = trees
         .iter()
         .flat_map(|(bucket, tree)| {
-            check::findings(tree, &format!("s3://{bucket}"), now, max_age_days, checks)
+            findings::findings(tree, &format!("s3://{bucket}"), now, max_age_days, checks)
         })
         .collect();
     let failed = findings.iter().any(|finding| finding.fatal);
@@ -122,7 +123,7 @@ async fn run(cli: Cli) -> Result<bool> {
             let issues: Vec<_> = findings
                 .iter()
                 .filter(|finding| finding.is_issue())
-                .map(check::Finding::line)
+                .map(findings::Finding::line)
                 .collect();
             if issues.is_empty() && !send_even_if_healthy {
                 println!("No red or yellow entries; no email sent.");
@@ -138,7 +139,7 @@ async fn run(cli: Cli) -> Result<bool> {
                 let body = if healthy {
                     let lines = findings
                         .iter()
-                        .map(check::Finding::line)
+                        .map(findings::Finding::line)
                         .collect::<Vec<_>>()
                         .join("\n");
                     report::healthy_body(&lines, max_age_days)

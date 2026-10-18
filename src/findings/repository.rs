@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 
 use super::{
-    findings::{Finding, Severity},
+    Finding, Severity,
     selection::{Kind, Selection},
 };
 

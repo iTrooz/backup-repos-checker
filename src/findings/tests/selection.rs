@@ -1,7 +1,7 @@
 //! Independent check selection and re-evaluation of stored findings.
 
 use super::*;
-use crate::check::selection::Kind;
+use crate::findings::selection::Kind;
 
 /// No downloads or content diagnostics occur when content is disabled.
 #[tokio::test]

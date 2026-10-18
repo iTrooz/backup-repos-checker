@@ -31,7 +31,7 @@ impl EvaluateFixture for Folder {
         color: bool,
         checks: Selection,
     ) -> String {
-        super::super::render(self, uri, &findings(self, uri, now, days, checks), color)
+        crate::check::render(self, uri, &findings(self, uri, now, days, checks), color)
     }
 
     /// Format only actionable findings, matching alert report selection.

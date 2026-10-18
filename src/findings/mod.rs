@@ -1,11 +1,23 @@
 //! Shared, structured check outcomes for tree rendering, email, and exit codes.
 
+/// Repository-specific byte-pattern validation.
+pub mod content;
+/// Structural inventory tree shared by scanning and evaluation.
+mod folder;
+/// Repository measurements and check conditions.
+mod repository;
+/// Recursive storage inspection.
+mod scan;
+/// Shared check identities, execution selection, and repository exclusions.
+pub mod selection;
+
+pub use folder::Folder;
+pub use repository::Repository;
+pub use scan::inspect;
+
 use chrono::{DateTime, TimeDelta, Utc};
 
-use super::{
-    Folder,
-    selection::{Kind, Selection},
-};
+use selection::{Kind, Selection};
 
 /// Display priority; neutral outcomes never claim a check passed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -106,3 +118,7 @@ fn collect(
         collect(child, &format!("{uri}/{name}"), cutoff, checks, results);
     }
 }
+
+/// Scan behavior, shared evaluation, and presentation grouped by responsibility.
+#[cfg(test)]
+mod tests;

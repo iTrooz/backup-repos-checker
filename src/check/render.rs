@@ -2,11 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{
-    Folder,
-    findings::{Finding, Severity},
-    selection::Kind,
-};
+use crate::findings::{Finding, Folder, Severity, selection::Kind};
 
 /// Render a tree using exactly the findings used for reports and exit codes.
 pub fn render(tree: &Folder, uri: &str, findings: &[Finding], color: bool) -> String {

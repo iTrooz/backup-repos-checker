@@ -34,7 +34,7 @@ async fn displayed_leaves_count_files_recursively() {
             silence_checks: &[],
         },
     ];
-    let checks = Selection::from_kinds(&[crate::check::selection::Kind::Folders]);
+    let checks = Selection::from_kinds(&[crate::findings::selection::Kind::Folders]);
     let tree = inspect(&storage, &repositories, checks).await.unwrap();
     for color in [false, true] {
         let output = tree.render("s3://test", Utc::now(), 7, color, checks);
