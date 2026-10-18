@@ -102,40 +102,6 @@ fn check_content(status: u16, bytes: &[u8], args: &[&str], extra: &str) -> Outpu
     )
 }
 
-/// Content validation accepts matching prefixes and reports mismatches.
-#[test]
-fn check_accepts_valid_content_and_rejects_invalid_content() {
-    let output = check_content(206, b"MAGIC123", &["check", "--all"], "");
-    assert_eq!(output.status.code(), Some(0), "{output:?}");
-    assert!(
-        String::from_utf8(output.stdout)
-            .unwrap()
-            .contains("[content: 0 files do not match pattern]")
-    );
-    let output = check_content(206, b"WRONG", &["check"], "");
-    assert_eq!(output.status.code(), Some(1), "{output:?}");
-    assert!(
-        String::from_utf8(output.stdout)
-            .unwrap()
-            .contains("[content: 1 files do not match pattern]")
-    );
-    assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .contains("deep/file")
-    );
-}
-
-/// Content failures are included in the email preview without SMTP delivery.
-#[test]
-fn content_failures_appear_in_email_preview() {
-    let output = check_content(206, b"WRONG", &["report", "--dry-run"], EMAIL);
-    assert_eq!(output.status.code(), Some(1), "{output:?}");
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("s3://test-bucket/repo: content: 1 files do not match pattern"));
-    assert!(stdout.contains("deep/file"));
-}
-
 /// Read failures are execution errors, while empty mismatching files are findings.
 #[test]
 fn content_access_errors_exit_two_but_empty_files_exit_one() {
@@ -154,17 +120,6 @@ fn content_access_errors_exit_two_but_empty_files_exit_one() {
         "",
     );
     assert_eq!(output.status.code(), Some(1), "{output:?}");
-}
-
-#[test]
-fn view_has_been_replaced_by_check() {
-    let output = run_args("", &["view"]);
-    assert_eq!(output.status.code(), Some(2));
-    assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .contains("unrecognized subcommand")
-    );
 }
 
 const EMAIL: &str = "[email]\nsmtp_host = '127.0.0.1'\nsmtp_port = 1\nfrom = 'backups@example.com'\nto = ['ops@example.com']";

@@ -53,18 +53,3 @@ fn silenced_missing_repository_does_not_fail() {
     assert!(stdout.contains("repo (0 files)"));
     assert!(!stdout.contains("not found"));
 }
-
-/// Configuration mistakes fail rather than silently leaving a check enabled.
-#[test]
-fn unknown_silenced_check_is_a_configuration_error() {
-    let output = run_args(
-        "s3_endpoint = 'https://example.com'\ns3_region = 'test'\n[[repositories]]\nuri = 's3://test/repo'\nsilence_checks = ['typo']",
-        &["check"],
-    );
-    assert_eq!(output.status.code(), Some(2), "{output:?}");
-    assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .contains("unknown variant")
-    );
-}

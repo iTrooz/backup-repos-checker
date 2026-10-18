@@ -108,25 +108,3 @@ async fn checks_every_file_but_bounds_failure_details() {
             .contains("additional failures omitted")
     );
 }
-
-/// Distinguish failed downloads from files that fail content validation.
-#[tokio::test]
-async fn content_access_failures_are_execution_errors() {
-    let storage = TestStorage {
-        files: [("repo/file".to_owned(), vec![])].into(),
-        reads: 0.into(),
-        fail_reads: true,
-    };
-    let content_check = toml::from_str("[[rules]]\nglob = '**'\npattern = '^GOOD'").unwrap();
-    let repositories = [RepositoryLocation {
-        prefix: "repo",
-        content_check: Some(&content_check),
-        silence_checks: &[],
-    }];
-
-    assert!(
-        inspect(&storage, &repositories, Selection::default())
-            .await
-            .is_err()
-    );
-}

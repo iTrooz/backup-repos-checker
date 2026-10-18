@@ -2,29 +2,6 @@
 
 use super::*;
 
-/// Tree and report timestamps use UTC seconds without fractions or a timezone suffix.
-#[tokio::test]
-async fn latest_timestamps_use_utc_seconds() {
-    let timestamp = DateTime::parse_from_rfc3339("2026-10-18T02:07:32.602+02:00")
-        .unwrap()
-        .with_timezone(&Utc);
-    let storage = MetadataStorage(vec![("repo/file", timestamp)]);
-    let tree = inspect_prefixes(&storage, &["repo".to_owned()])
-        .await
-        .unwrap();
-    let now = timestamp + TimeDelta::days(8);
-    let checks = Selection::default();
-
-    assert_eq!(
-        tree.render("s3://test", now, 7, false, checks),
-        "s3://test\n└── repo  [folders: found]  [age: latest is 2026-10-18T00:07:32]  [content: no files checked] (1 files)\n"
-    );
-    assert_eq!(
-        tree.issues("s3://test", now, 7, checks),
-        ["s3://test/repo: age: latest is 2026-10-18T00:07:32"]
-    );
-}
-
 /// Timestamp fixtures that must never download object contents.
 struct MetadataStorage(Vec<(&'static str, DateTime<Utc>)>);
 

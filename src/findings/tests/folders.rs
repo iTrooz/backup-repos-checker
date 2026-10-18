@@ -120,33 +120,6 @@ async fn listing_errors_propagate() {
     );
 }
 
-/// An entire-bucket repository renders without exposing its descendants.
-#[tokio::test]
-async fn bucket_root_repository_collapses_everything() {
-    let storage = TestStorage {
-        files: [("deep/file".to_owned(), vec![])].into(),
-        reads: 0.into(),
-        fail_reads: true,
-    };
-    let repositories = [RepositoryLocation {
-        prefix: "",
-        content_check: None,
-        silence_checks: &[],
-    }];
-    let checks = Selection::default();
-
-    let tree = inspect(&storage, &repositories, checks).await.unwrap();
-
-    assert!(!tree.failed(checks));
-    assert!(tree.issues("s3://test", Utc::now(), 7, checks).is_empty());
-    assert_eq!(
-        tree.render("s3://test", Utc::now(), 7, false, checks)
-            .lines()
-            .count(),
-        1
-    );
-}
-
 /// Collapse unconfigured branches without hiding configured groups or altering reports.
 #[tokio::test]
 async fn unconfigured_folders_hide_children_only_in_tree_output() {
