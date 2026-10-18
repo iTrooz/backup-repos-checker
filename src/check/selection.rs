@@ -1,9 +1,11 @@
 //! Select which independent checks contribute work and findings.
 
 use clap::ValueEnum;
+use serde::Deserialize;
 
-/// Public names accepted by `check --checks`.
-#[derive(Clone, Copy, Debug, ValueEnum)]
+/// Public names accepted by CLI selection and repository silencing.
+#[derive(Clone, Copy, Debug, Deserialize, ValueEnum)]
+#[serde(rename_all = "lowercase")]
 pub enum Kind {
     Folders,
     Age,
@@ -30,6 +32,18 @@ impl Default for Selection {
 }
 
 impl Selection {
+    /// Remove repository-silenced checks without enabling any unselected checks.
+    pub fn without(mut self, silenced: &[Kind]) -> Self {
+        for kind in silenced {
+            match kind {
+                Kind::Folders => self.folders = false,
+                Kind::Age => self.age = false,
+                Kind::Content => self.content = false,
+            }
+        }
+        self
+    }
+
     /// Convert CLI values into flags, treating duplicate names as one check.
     pub fn from_kinds(kinds: &[Kind]) -> Self {
         Self {

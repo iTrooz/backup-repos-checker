@@ -9,6 +9,8 @@ mod content;
 mod folders;
 /// Independent run-wide check selection.
 mod selection;
+/// Per-repository exclusions from execution and presentation.
+mod silencing;
 
 use super::*;
 use crate::storage::FileEntry;

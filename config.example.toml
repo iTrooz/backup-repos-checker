@@ -6,6 +6,9 @@ max_age_days = 7
 
 [[repositories]]
 uri = "s3://bucket-one/backups/server-a"
+# Optional: disable these checks for this repository in check and report.
+# Valid names: "folders", "age", "content". Omit or use [] to keep all checks.
+silence_checks = []
 
 [[repositories]]
 uri = "s3://bucket-one/backups/server-b"
@@ -13,8 +16,8 @@ uri = "s3://bucket-one/backups/server-b"
 [[repositories]]
 uri = "s3://bucket-two/database"
 
-# Optional: validate every file's first 64 bytes, recursively.
-# The first matching rule wins; files without a matching rule fail.
+# Optional: validate matching files' first 64 bytes, recursively.
+# The first matching rule wins; files without a matching rule are accepted.
 # Uncomment only if these patterns describe the actual repository format.
 # [[repositories.content_check.rules]]
 # glob = "**/*.gz"

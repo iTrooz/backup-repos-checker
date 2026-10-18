@@ -26,10 +26,12 @@ async fn displayed_leaves_count_files_recursively() {
         RepositoryLocation {
             prefix: "group/repo",
             content_check: None,
+            silence_checks: &[],
         },
         RepositoryLocation {
             prefix: "group/missing",
             content_check: None,
+            silence_checks: &[],
         },
     ];
     let checks = Selection::from_kinds(&[crate::check::selection::Kind::Folders]);
@@ -46,6 +48,7 @@ async fn displayed_leaves_count_files_recursively() {
     let repositories = [RepositoryLocation {
         prefix: "",
         content_check: None,
+        silence_checks: &[],
     }];
     let tree = inspect(&storage, &repositories, checks).await.unwrap();
     assert_eq!(
@@ -69,6 +72,7 @@ async fn exact_object_and_similar_prefix_do_not_establish_existence() {
     let repositories = [RepositoryLocation {
         prefix: "repo",
         content_check: None,
+        silence_checks: &[],
     }];
     assert!(
         inspect(&storage, &repositories, Selection::default())
@@ -99,6 +103,7 @@ async fn listing_errors_propagate() {
     let repositories = [RepositoryLocation {
         prefix: "repo",
         content_check: None,
+        silence_checks: &[],
     }];
     assert!(
         inspect(&Broken, &repositories, Selection::default())
@@ -118,6 +123,7 @@ async fn bucket_root_repository_collapses_everything() {
     let repositories = [RepositoryLocation {
         prefix: "",
         content_check: None,
+        silence_checks: &[],
     }];
     let checks = Selection::default();
     let tree = inspect(&storage, &repositories, checks).await.unwrap();
@@ -148,10 +154,12 @@ async fn unconfigured_folders_hide_children_only_in_tree_output() {
         RepositoryLocation {
             prefix: "group/repo",
             content_check: None,
+            silence_checks: &[],
         },
         RepositoryLocation {
             prefix: "group/missing",
             content_check: None,
+            silence_checks: &[],
         },
     ];
     let checks = Selection::default();

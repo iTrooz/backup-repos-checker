@@ -4,6 +4,10 @@ use std::{
     process::{Command, Output},
 };
 
+/// Config-driven repository exclusions for both CLI commands.
+#[path = "cli/silencing.rs"]
+mod silencing;
+
 fn run(config: &str) -> Output {
     run_args(config, &["check"])
 }

@@ -54,6 +54,7 @@ async fn inspect_prefixes(storage: &dyn Storage, prefixes: &[String]) -> Result<
         .map(|prefix| RepositoryLocation {
             prefix,
             content_check: None,
+            silence_checks: &[],
         })
         .collect();
     inspect(storage, &repositories, Selection::default()).await

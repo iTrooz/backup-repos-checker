@@ -32,17 +32,22 @@ impl Default for AgeCheckConfig {
     }
 }
 
+/// Repository location, content rules, and checks explicitly disabled for this repository.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RepositoryConfig {
     pub uri: String,
     pub content_check: Option<crate::check::content::ContentCheck>,
+    #[serde(default)]
+    pub silence_checks: Vec<crate::check::selection::Kind>,
 }
 
+/// Borrowed repository settings for scanning one bucket.
 #[derive(Clone, Copy)]
 pub struct RepositoryLocation<'a> {
     pub prefix: &'a str,
     pub content_check: Option<&'a crate::check::content::ContentCheck>,
+    pub silence_checks: &'a [crate::check::selection::Kind],
 }
 
 impl Config {
@@ -104,6 +109,7 @@ impl Config {
             prefixes.push(RepositoryLocation {
                 prefix,
                 content_check: config.content_check.as_ref(),
+                silence_checks: &config.silence_checks,
             });
         }
         Ok(buckets)
@@ -210,5 +216,27 @@ mod tests {
             ))
             .is_ok()
         );
+    }
+
+    /// Silencing defaults to empty and accepts only known check names.
+    #[test]
+    fn repository_silencing_is_validated_and_forwarded() {
+        let base = "s3_endpoint = 'https://example.com'\ns3_region = 'test'\n[[repositories]]\nuri = 's3://bucket/repo'\n";
+        assert!(
+            Config::parse(base).unwrap().repositories[0]
+                .silence_checks
+                .is_empty()
+        );
+        let config = Config::parse(&format!(
+            "{base}silence_checks = ['folders', 'age', 'content']"
+        ))
+        .unwrap();
+        let buckets = config.buckets().unwrap();
+        let active = crate::check::selection::Selection::default()
+            .without(buckets["bucket"][0].silence_checks);
+        assert!(!active.folders && !active.age && !active.content);
+        for invalid in ["['unknown']", "['Age']", "'age'", "[1]"] {
+            assert!(Config::parse(&format!("{base}silence_checks = {invalid}")).is_err());
+        }
     }
 }

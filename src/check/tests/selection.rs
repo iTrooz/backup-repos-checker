@@ -15,6 +15,7 @@ async fn disabled_content_never_reads_objects() {
     let repositories = [RepositoryLocation {
         prefix: "repo",
         content_check: Some(&content_check),
+        silence_checks: &[],
     }];
     let checks = Selection::from_kinds(&[Kind::Folders, Kind::Age]);
     let tree = inspect(&storage, &repositories, checks).await.unwrap();
@@ -34,6 +35,7 @@ async fn disabled_folders_do_not_fail_missing_repositories() {
     let repositories = [RepositoryLocation {
         prefix: "missing",
         content_check: None,
+        silence_checks: &[],
     }];
     let checks = Selection::from_kinds(&[Kind::Age, Kind::Content]);
     let tree = inspect(&storage, &repositories, checks).await.unwrap();
@@ -61,6 +63,7 @@ async fn disabled_age_does_not_report_stale_or_unconfigured_entries() {
     let repositories = [RepositoryLocation {
         prefix: "repo",
         content_check: Some(&content_check),
+        silence_checks: &[],
     }];
     let now = Utc::now() + TimeDelta::days(8);
     let checks = Selection::from_kinds(&[Kind::Content]);
@@ -85,6 +88,7 @@ async fn content_without_rules_is_neutral() {
     let repositories = [RepositoryLocation {
         prefix: "repo",
         content_check: None,
+        silence_checks: &[],
     }];
     let checks = Selection::from_kinds(&[Kind::Content]);
     let tree = inspect(&storage, &repositories, checks).await.unwrap();
@@ -108,6 +112,7 @@ fn tree_does_not_retain_check_selection() {
         checked_files: 1,
         content_failures: 1,
         failure_samples: vec!["file: invalid content".to_owned()],
+        silence_checks: vec![],
     });
     tree.at("parent/missing").repository = Some(Repository::default());
     tree.at("unconfigured");

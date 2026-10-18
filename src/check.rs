@@ -31,6 +31,7 @@ struct Repository {
     checked_files: usize,
     content_failures: usize,
     failure_samples: Vec<String>,
+    silence_checks: Vec<selection::Kind>,
 }
 
 /// One folder-tree node containing repository findings and named child folders.
@@ -61,6 +62,13 @@ enum Status {
 }
 
 impl Folder {
+    /// Apply only this repository's silencing policy, never inheriting it to children.
+    fn active_checks(&self, checks: Selection) -> Selection {
+        self.repository
+            .as_ref()
+            .map_or(checks, |repo| checks.without(&repo.silence_checks))
+    }
+
     /// Create missing ancestors, ignoring empty path components, and return the node.
     fn at(&mut self, path: &str) -> &mut Self {
         let mut folder = self;
@@ -88,12 +96,14 @@ impl Folder {
     /// Fail for enabled missing-repository or content checks, not stale/unconfigured folders.
     pub fn failed(&self, checks: Selection) -> bool {
         self.repository.as_ref().is_some_and(|repo| {
+            let checks = self.active_checks(checks);
             (checks.folders && !repo.exists) || (checks.content && repo.content_failures > 0)
         }) || self.children.values().any(|child| child.failed(checks))
     }
 
     /// Prioritize missing repositories, content failures, then age; ignore disabled checks.
     fn status(&self, cutoff: DateTime<Utc>, checks: Selection) -> Status {
+        let checks = self.active_checks(checks);
         match &self.repository {
             Some(repo) if !repo.exists => {
                 if checks.folders {
@@ -161,7 +171,11 @@ impl Folder {
         if !checks.content {
             return Vec::new();
         }
-        let mut issues: Vec<_> = self.content_failure(path).into_iter().collect();
+        let mut issues: Vec<_> = if self.active_checks(checks).content {
+            self.content_failure(path).into_iter().collect()
+        } else {
+            Vec::new()
+        };
         for (name, child) in &self.children {
             issues.extend(child.content_diagnostics(&format!("{path}/{name}"), checks));
         }
@@ -184,7 +198,9 @@ impl Folder {
                     .as_ref()
                     .expect("repository with invalid content");
                 issues.push(self.content_failure(path).expect("invalid content"));
-                if checks.age && repo.newest.is_none_or(|modified| modified < cutoff) {
+                if self.active_checks(checks).age
+                    && repo.newest.is_none_or(|modified| modified < cutoff)
+                {
                     issues.push(format!("[STALE] {path}"));
                 }
             }
@@ -242,7 +258,8 @@ impl Folder {
         options: RenderOptions,
         output: &mut String,
     ) {
-        let status = self.status(options.cutoff, options.checks);
+        let checks = self.active_checks(options.checks);
+        let status = self.status(options.cutoff, checks);
         let style = match status {
             Status::Fresh => "32",
             Status::Stale => "33",
@@ -254,14 +271,14 @@ impl Folder {
         // Label enabled checks; missing repositories omit age/content, and zero checks are explicit.
         let mut detail = String::new();
         if let Some(repo) = &self.repository {
-            if options.checks.folders {
+            if checks.folders {
                 detail.push_str(if repo.exists {
                     "  [folders: found]"
                 } else {
                     "  [folders: not found]"
                 });
             }
-            if options.checks.age && repo.exists {
+            if checks.age && repo.exists {
                 detail.push_str(&repo.newest.map_or_else(
                     || "  [age: no files]".to_owned(),
                     |timestamp| {
@@ -272,14 +289,14 @@ impl Folder {
                     },
                 ));
             }
-            if options.checks.content && repo.exists && repo.checked_files == 0 {
+            if checks.content && repo.exists && repo.checked_files == 0 {
                 detail.push_str("  [content: no files checked]");
             }
         } else if matches!(status, Status::Unconfigured) {
             detail.push_str("  [folders: unconfigured]");
         }
         if let Some(repo) = &self.repository
-            && options.checks.content
+            && checks.content
             && repo.checked_files > 0
         {
             detail.push_str(&format!(
@@ -336,7 +353,10 @@ pub async fn inspect(
     // Seed configured paths so missing repositories still appear in the result.
     let mut root = Folder::default();
     for repository in repositories {
-        root.at(repository.prefix).repository = Some(Repository::default());
+        root.at(repository.prefix).repository = Some(Repository {
+            silence_checks: repository.silence_checks.to_vec(),
+            ..Repository::default()
+        });
     }
     let entries = storage.list().await?;
     // Bound concurrent prefix downloads while preserving listing order for diagnostics.
@@ -355,6 +375,7 @@ pub async fn inspect(
             if checks.content
                 && !entry.path.ends_with('/')
                 && let Some(repository) = repository
+                && checks.without(repository.silence_checks).content
                 && let Some(content_check) = repository.content_check
             {
                 checked = true;
@@ -401,7 +422,7 @@ pub async fn inspect(
                 }
             }
             // Directory markers establish existence, but their timestamps do not count for age.
-            if checks.age && !marker {
+            if checks.without(repository.silence_checks).age && !marker {
                 repo.newest = Some(
                     repo.newest
                         .map_or(entry.modified, |old| old.max(entry.modified)),
