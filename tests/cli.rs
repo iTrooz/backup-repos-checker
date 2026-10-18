@@ -4,9 +4,6 @@ use std::{
     process::{Command, Output},
 };
 
-/// Informational tree details are opt-in without changing check execution.
-#[path = "cli/display.rs"]
-mod display;
 /// Check and report format the same independently evaluated findings.
 #[path = "cli/findings.rs"]
 mod findings;
