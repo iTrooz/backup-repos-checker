@@ -179,7 +179,7 @@ impl Folder {
                     .and_then(|repo| repo.newest)
                     .map_or_else(
                         || "no files".to_owned(),
-                        |timestamp| format!("latest: {}", timestamp.to_rfc3339()),
+                        |timestamp| format!("latest: {}", timestamp.format("%Y-%m-%dT%H:%M:%S")),
                     );
                 issues.push(format!("[STALE] {path} ({latest})"));
             }
@@ -244,7 +244,7 @@ impl Folder {
             .to_owned(),
             Some(repo) if options.checks.age => repo.newest.map_or_else(
                 || "  [no files]".to_owned(),
-                |timestamp| format!("  [latest: {}]", timestamp.to_rfc3339()),
+                |timestamp| format!("  [latest: {}]", timestamp.format("%Y-%m-%dT%H:%M:%S")),
             ),
             _ => String::new(),
         };
