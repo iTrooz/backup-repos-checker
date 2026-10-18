@@ -100,14 +100,14 @@ fn check_accepts_valid_content_and_rejects_invalid_content() {
     assert!(
         String::from_utf8(output.stdout)
             .unwrap()
-            .contains("content failures: 0/1")
+            .contains("[content: 0 files do not match pattern]")
     );
     let output = check_content(206, b"WRONG", &["check"], "");
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     assert!(
         String::from_utf8(output.stdout)
             .unwrap()
-            .contains("content failures: 1/1")
+            .contains("[content: 1 files do not match pattern]")
     );
     assert!(
         String::from_utf8(output.stderr)
@@ -282,7 +282,7 @@ fn stale_and_unconfigured_folders_exit_successfully() {
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("repo  [latest:"));
+    assert!(stdout.contains("repo  [folders: found]  [age: latest is "));
     assert!(stdout.contains("untracked"));
     assert!(!stdout.contains("deep"));
     assert!(!stdout.contains('\x1b'));
@@ -295,7 +295,7 @@ fn missing_repositories_exit_one() {
     assert!(
         String::from_utf8(output.stdout)
             .unwrap()
-            .contains("repo  [not found]")
+            .contains("repo  [folders: not found]")
     );
 }
 
@@ -324,8 +324,8 @@ fn folders_only_skips_age_and_content() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("untracked"));
-    assert!(!stdout.contains("latest:"));
-    assert!(!stdout.contains("content failures"));
+    assert!(!stdout.contains("[age:"));
+    assert!(!stdout.contains("[content:"));
     assert!(output.stderr.is_empty());
 }
 
@@ -339,9 +339,9 @@ fn age_only_skips_folders_and_content() {
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("latest:"));
+    assert!(stdout.contains("[age: latest is "));
     assert!(!stdout.contains("untracked"));
-    assert!(!stdout.contains("content failures"));
+    assert!(!stdout.contains("[content:"));
 }
 
 /// Selected content checks still download and validate file prefixes.
@@ -356,8 +356,8 @@ fn content_selection_preserves_validation_failures() {
         let output = check_content(206, b"WRONG", &["check", "--checks", checks], "");
         assert_eq!(output.status.code(), Some(1), "{checks}: {output:?}");
         let stdout = String::from_utf8(output.stdout).unwrap();
-        assert!(stdout.contains("content failures: 1/1"));
-        assert_eq!(stdout.contains("latest:"), checks.contains("age"));
+        assert!(stdout.contains("[content: 1 files do not match pattern]"));
+        assert_eq!(stdout.contains("[age:"), checks.contains("age"));
     }
 }
 

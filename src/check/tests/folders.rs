@@ -107,8 +107,8 @@ async fn unconfigured_folders_hide_children_only_in_tree_output() {
     for color in [false, true] {
         let output = tree.render("s3://test", Utc::now(), 7, color, checks);
         assert!(output.contains("group"));
-        assert!(output.contains("repo  [latest:"));
-        assert!(output.contains("missing  [not found]"));
+        assert!(output.contains("repo  [folders: found]  [age: latest is "));
+        assert!(output.contains("missing  [folders: not found]"));
         assert!(output.contains("unconfigured"));
         assert!(output.contains("root-unconfigured"));
         assert_eq!(output.lines().count(), 6);

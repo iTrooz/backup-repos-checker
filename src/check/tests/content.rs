@@ -33,7 +33,7 @@ async fn content_checks_are_recursive_and_fail_closed() {
     assert_eq!(storage.reads.load(std::sync::atomic::Ordering::SeqCst), 3);
     let rendered = tree.render("s3://test", Utc::now(), 7, true, Selection::default());
     assert!(rendered.contains("\x1b[31mrepo"));
-    assert!(rendered.contains("[content failures: 3/4]"));
+    assert!(rendered.contains("[content: 3 files do not match pattern]"));
     assert!(!rendered.contains("bad.gz"));
     let issues = tree
         .issues("s3://test", Utc::now(), 7, Selection::default())

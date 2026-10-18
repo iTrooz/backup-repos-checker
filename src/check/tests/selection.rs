@@ -40,7 +40,8 @@ async fn disabled_folders_do_not_fail_missing_repositories() {
     assert!(!tree.failed(checks));
     assert!(tree.issues("s3://test", Utc::now(), 7, checks).is_empty());
     let rendered = tree.render("s3://test", Utc::now(), 7, true, checks);
-    assert!(rendered.contains("missing  [not checked]"));
+    assert!(rendered.contains("missing\n"));
+    assert!(!rendered.contains("[folders:"));
     assert!(!rendered.contains('\x1b'));
 }
 
@@ -68,7 +69,7 @@ async fn disabled_age_does_not_report_stale_or_unconfigured_entries() {
     assert!(tree.issues("s3://test", now, 7, checks).is_empty());
     let rendered = tree.render("s3://test", now, 7, true, checks);
     assert!(rendered.contains("\x1b[32mrepo"));
-    for omitted in ["\x1b[33m", "latest:", "untracked"] {
+    for omitted in ["\x1b[33m", "[age:", "[folders:", "untracked"] {
         assert!(!rendered.contains(omitted));
     }
 }
@@ -132,6 +133,6 @@ fn tree_does_not_retain_check_selection() {
     assert_eq!(tree.content_diagnostics("s3://test", content).len(), 1);
     let rendered = tree.render("s3://test", now, 7, true, folders);
     assert!(rendered.contains("\x1b[32mrepo"));
-    assert!(!rendered.contains("content failures"));
-    assert!(!rendered.contains("latest:"));
+    assert!(!rendered.contains("[content:"));
+    assert!(!rendered.contains("[age:"));
 }

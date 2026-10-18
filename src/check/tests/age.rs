@@ -16,7 +16,7 @@ async fn latest_timestamps_use_utc_seconds() {
     let checks = Selection::default();
     assert_eq!(
         tree.render("s3://test", now, 7, false, checks),
-        "s3://test\n└── repo  [latest: 2026-10-18T00:07:32]\n"
+        "s3://test\n└── repo  [folders: found]  [age: latest is 2026-10-18T00:07:32]  [content: no files checked]\n"
     );
     assert_eq!(
         tree.issues("s3://test", now, 7, checks),
@@ -77,8 +77,8 @@ async fn recursive_freshness_and_tree_colors() {
     for expected in [
         "\x1b[32mfresh",
         "\x1b[33mstale",
-        "\x1b[33mempty  [no files]",
-        "\x1b[31;4mmissing  [not found]",
+        "\x1b[33mempty  [folders: found]  [age: no files]",
+        "\x1b[31;4mmissing  [folders: not found]",
         "\x1b[31muntracked",
     ] {
         assert!(rendered.contains(expected), "{expected}");

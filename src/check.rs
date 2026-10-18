@@ -235,26 +235,40 @@ impl Folder {
             Status::Unconfigured => "31",
             Status::Group => "",
         };
-        let mut detail = match &self.repository {
-            Some(repo) if !repo.exists => if options.checks.folders {
-                "  [not found]"
-            } else {
-                "  [not checked]"
+        // Label each enabled check independently; unavailable findings stay explicit.
+        let mut detail = String::new();
+        if let Some(repo) = &self.repository {
+            if options.checks.folders {
+                detail.push_str(if repo.exists {
+                    "  [folders: found]"
+                } else {
+                    "  [folders: not found]"
+                });
             }
-            .to_owned(),
-            Some(repo) if options.checks.age => repo.newest.map_or_else(
-                || "  [no files]".to_owned(),
-                |timestamp| format!("  [latest: {}]", timestamp.format("%Y-%m-%dT%H:%M:%S")),
-            ),
-            _ => String::new(),
-        };
+            if options.checks.age && repo.exists {
+                detail.push_str(&repo.newest.map_or_else(
+                    || "  [age: no files]".to_owned(),
+                    |timestamp| {
+                        format!(
+                            "  [age: latest is {}]",
+                            timestamp.format("%Y-%m-%dT%H:%M:%S")
+                        )
+                    },
+                ));
+            }
+            if options.checks.content && repo.exists && repo.checked_files == 0 {
+                detail.push_str("  [content: no files checked]");
+            }
+        } else if matches!(status, Status::Unconfigured) {
+            detail.push_str("  [folders: unconfigured]");
+        }
         if let Some(repo) = &self.repository
             && options.checks.content
             && repo.checked_files > 0
         {
             detail.push_str(&format!(
-                "  [content failures: {}/{}]",
-                repo.content_failures, repo.checked_files
+                "  [content: {} files do not match pattern]",
+                repo.content_failures
             ));
         }
         output.push_str(indent);
