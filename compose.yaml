@@ -14,9 +14,4 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME}
       SMTP_PASSWORD: ${SMTP_PASSWORD}
     volumes:
-      - type: bind
-        source: ./config.toml
-        target: /config/config.toml
-        read_only: true
-        bind:
-          create_host_path: false
+      - ./config.toml:/config/config.toml
