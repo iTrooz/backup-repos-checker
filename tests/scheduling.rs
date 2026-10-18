@@ -2,9 +2,12 @@
 
 use std::process::{Command, Output};
 
+/// Scratch directories shared by the integration tests.
+mod common;
+
 /// Run the entrypoint with temporary config/crontab paths and no daemon startup.
 fn schedule(normal: Option<&str>, healthy: Option<&str>) -> (Output, String) {
-    let directory = tempfile::tempdir_in("/tmp/opencode").unwrap();
+    let directory = common::temp_dir();
     let config = directory.path().join("config.toml");
     let crontab = directory.path().join("crontab");
     std::fs::write(&config, "").unwrap();

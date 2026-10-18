@@ -4,6 +4,8 @@ use std::{
     process::{Command, Output},
 };
 
+/// Scratch directories shared by the integration tests.
+mod common;
 /// Check and report format the same independently evaluated findings.
 #[path = "cli/findings.rs"]
 mod findings;
@@ -12,11 +14,7 @@ mod findings;
 mod silencing;
 
 fn run_args(config: &str, args: &[&str]) -> Output {
-    let directory = if std::path::Path::new("/tmp/opencode").is_dir() {
-        tempfile::tempdir_in("/tmp/opencode").unwrap()
-    } else {
-        tempfile::tempdir().unwrap()
-    };
+    let directory = common::temp_dir();
     std::fs::write(directory.path().join("config.toml"), config).unwrap();
     Command::new(env!("CARGO_BIN_EXE_backup-repos-checker"))
         .args(args)
