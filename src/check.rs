@@ -38,6 +38,7 @@ struct Repository {
 pub struct Folder {
     repository: Option<Repository>,
     children: BTreeMap<String, Folder>,
+    file_count: usize,
 }
 
 /// Run-wide rendering options passed unchanged through tree traversal.
@@ -67,6 +68,16 @@ impl Folder {
             folder = folder.children.entry(component.to_owned()).or_default();
         }
         folder
+    }
+
+    /// Count one object in its displayed folder and every ancestor, excluding markers.
+    fn count_file(&mut self, path: &str) {
+        self.file_count += 1;
+        let mut folder = self;
+        for component in path.split('/').filter(|part| !part.is_empty()) {
+            folder = folder.children.entry(component.to_owned()).or_default();
+            folder.file_count += 1;
+        }
     }
 
     /// Whether this node or any descendant is a configured repository.
@@ -276,6 +287,12 @@ impl Folder {
                 repo.content_failures
             ));
         }
+        let leaf = self.repository.is_some()
+            || matches!(status, Status::Unconfigured)
+            || self.children.is_empty();
+        if leaf {
+            detail.push_str(&format!(" ({} files)", self.file_count));
+        }
         output.push_str(indent);
         if let Some(last) = last {
             output.push_str(if last { "└── " } else { "├── " });
@@ -358,6 +375,14 @@ pub async fn inspect(
     // Aggregate entries into repository findings, propagating listing and content-read errors.
     while let Some((entry, repository, checked, failure)) = inspected.try_next().await? {
         let marker = entry.path.ends_with('/');
+        // Count real objects recursively, collapsing repository paths to their configured node.
+        if !marker && (repository.is_some() || checks.folders) {
+            let folder = repository.map_or_else(
+                || entry.path.rsplit_once('/').map_or("", |(parent, _)| parent),
+                |repo| repo.prefix,
+            );
+            root.count_file(folder);
+        }
         if let Some(repository) = repository {
             let repo = root
                 .at(repository.prefix)

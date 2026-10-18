@@ -16,7 +16,7 @@ async fn latest_timestamps_use_utc_seconds() {
     let checks = Selection::default();
     assert_eq!(
         tree.render("s3://test", now, 7, false, checks),
-        "s3://test\n└── repo  [folders: found]  [age: latest is 2026-10-18T00:07:32]  [content: no files checked]\n"
+        "s3://test\n└── repo  [folders: found]  [age: latest is 2026-10-18T00:07:32]  [content: no files checked] (1 files)\n"
     );
     assert_eq!(
         tree.issues("s3://test", now, 7, checks),

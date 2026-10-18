@@ -40,7 +40,7 @@ async fn disabled_folders_do_not_fail_missing_repositories() {
     assert!(!tree.failed(checks));
     assert!(tree.issues("s3://test", Utc::now(), 7, checks).is_empty());
     let rendered = tree.render("s3://test", Utc::now(), 7, true, checks);
-    assert!(rendered.contains("missing\n"));
+    assert!(rendered.contains("missing (0 files)\n"));
     assert!(!rendered.contains("[folders:"));
     assert!(!rendered.contains('\x1b'));
 }
