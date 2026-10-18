@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use lettre::{
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
     transport::smtp::authentication::Credentials,
@@ -72,7 +72,12 @@ impl EmailConfig {
         message.body(body).context("cannot build report email")
     }
 
+    /// Send using required SMTP credentials and verified TLS; previews do not call this.
     pub async fn send(&self, message: Message) -> Result<()> {
+        let username = std::env::var("SMTP_USERNAME").context("SMTP_USERNAME must be set")?;
+        let password = std::env::var("SMTP_PASSWORD").context("SMTP_PASSWORD must be set")?;
+        ensure!(!username.is_empty(), "SMTP_USERNAME must not be empty");
+        ensure!(!password.is_empty(), "SMTP_PASSWORD must not be empty");
         let (builder, default_port) = match self.encryption {
             Encryption::Starttls => (
                 AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&self.smtp_host)?,
@@ -83,22 +88,10 @@ impl EmailConfig {
                 465,
             ),
         };
-        let mut builder = builder
-            .port(self.smtp_port.unwrap_or(default_port))
-            .timeout(Some(Duration::from_secs(30)));
-        match (
-            std::env::var("SMTP_USERNAME"),
-            std::env::var("SMTP_PASSWORD"),
-        ) {
-            (Ok(username), Ok(password)) if !username.is_empty() && !password.is_empty() => {
-                builder = builder.credentials(Credentials::new(username, password));
-            }
-            (Err(std::env::VarError::NotPresent), Err(std::env::VarError::NotPresent)) => {}
-            _ => bail!(
-                "set both SMTP_USERNAME and SMTP_PASSWORD to nonempty values, or neither for unauthenticated SMTP"
-            ),
-        }
         builder
+            .port(self.smtp_port.unwrap_or(default_port))
+            .timeout(Some(Duration::from_secs(30)))
+            .credentials(Credentials::new(username, password))
             .build()
             .send(message)
             .await

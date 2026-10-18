@@ -5,9 +5,6 @@ set -eu
 if [ -z "${AWS_SESSION_TOKEN:-}" ]; then
     unset AWS_SESSION_TOKEN
 fi
-if [ -z "${SMTP_USERNAME:-}" ] && [ -z "${SMTP_PASSWORD:-}" ]; then
-    unset SMTP_USERNAME SMTP_PASSWORD
-fi
 
 if [ "${1:-cron}" != "cron" ]; then
     exec /usr/local/bin/backup-repos-checker "$@"

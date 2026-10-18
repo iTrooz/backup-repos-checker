@@ -21,8 +21,8 @@ fn run_args(config: &str, args: &[&str]) -> Output {
         .env("AWS_ACCESS_KEY_ID", "test")
         .env("AWS_SECRET_ACCESS_KEY", "test")
         .env_remove("AWS_SESSION_TOKEN")
-        .env_remove("SMTP_USERNAME")
-        .env_remove("SMTP_PASSWORD")
+        .env("SMTP_USERNAME", "test")
+        .env("SMTP_PASSWORD", "test")
         .output()
         .unwrap()
 }
