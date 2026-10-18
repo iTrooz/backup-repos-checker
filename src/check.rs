@@ -217,7 +217,7 @@ impl Folder {
         output
     }
 
-    /// Render a collapsed repository line without details from disabled checks.
+    /// Render repositories and unconfigured folders as single collapsed lines.
     fn render_into(
         &self,
         name: &str,
@@ -226,7 +226,8 @@ impl Folder {
         options: RenderOptions,
         output: &mut String,
     ) {
-        let style = match self.status(options.cutoff, options.checks) {
+        let status = self.status(options.cutoff, options.checks);
+        let style = match status {
             Status::Fresh => "32",
             Status::Stale => "33",
             Status::Missing => "31;4",
@@ -265,7 +266,8 @@ impl Folder {
         } else {
             output.push_str(&format!("{name}{detail}\n"));
         }
-        if self.repository.is_some() {
+        // Collapse display only: descendants remain available to scans and reports.
+        if self.repository.is_some() || matches!(status, Status::Unconfigured) {
             return;
         }
         let child_indent = format!(

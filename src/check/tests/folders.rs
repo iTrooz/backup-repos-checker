@@ -78,3 +78,63 @@ async fn bucket_root_repository_collapses_everything() {
         1
     );
 }
+
+/// Collapse unconfigured branches without hiding configured groups or altering reports.
+#[tokio::test]
+async fn unconfigured_folders_hide_children_only_in_tree_output() {
+    let storage = TestStorage {
+        files: [
+            ("group/repo/private/file".to_owned(), vec![]),
+            ("group/unconfigured/deep/file".to_owned(), vec![]),
+            ("root-unconfigured/nested/file".to_owned(), vec![]),
+        ]
+        .into(),
+        reads: 0.into(),
+        fail_reads: true,
+    };
+    let repositories = [
+        RepositoryLocation {
+            prefix: "group/repo",
+            content_check: None,
+        },
+        RepositoryLocation {
+            prefix: "group/missing",
+            content_check: None,
+        },
+    ];
+    let checks = Selection::default();
+    let tree = inspect(&storage, &repositories, checks).await.unwrap();
+    for color in [false, true] {
+        let output = tree.render("s3://test", Utc::now(), 7, color, checks);
+        assert!(output.contains("group"));
+        assert!(output.contains("repo  [latest:"));
+        assert!(output.contains("missing  [not found]"));
+        assert!(output.contains("unconfigured"));
+        assert!(output.contains("root-unconfigured"));
+        assert_eq!(output.lines().count(), 6);
+        for hidden in ["private", "deep", "nested"] {
+            assert!(!output.contains(hidden), "{output}");
+        }
+        if color {
+            assert!(output.contains("\x1b[31munconfigured"));
+            assert!(output.contains("\x1b[31mroot-unconfigured"));
+            assert!(!output.contains("\x1b[31mgroup"));
+        }
+    }
+    assert!(
+        tree.children["root-unconfigured"]
+            .children
+            .contains_key("nested")
+    );
+    let issues = tree.issues("s3://test", Utc::now(), 7, checks);
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue == "[UNCONFIGURED] s3://test/group/unconfigured/deep")
+    );
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue == "[UNCONFIGURED] s3://test/root-unconfigured/nested")
+    );
+}
