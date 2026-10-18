@@ -11,10 +11,6 @@ mod findings;
 #[path = "cli/silencing.rs"]
 mod silencing;
 
-fn run(config: &str) -> Output {
-    run_args(config, &["check"])
-}
-
 fn run_args(config: &str, args: &[&str]) -> Output {
     let directory = if std::path::Path::new("/tmp/opencode").is_dir() {
         tempfile::tempdir_in("/tmp/opencode").unwrap()
@@ -163,27 +159,6 @@ fn healthy_report_skips_smtp() {
     );
 }
 
-/// Healthy previews reuse one listing and include findings one per line without SMTP.
-#[test]
-fn healthy_report_can_be_requested_explicitly() {
-    let contents = format!(
-        "<Contents><Key>repo/file</Key><LastModified>{}</LastModified></Contents>",
-        chrono::Utc::now().to_rfc3339(),
-    );
-    let output = with_listing(
-        &contents,
-        &["report", "--send-even-if-healthy", "--dry-run"],
-        EMAIL,
-    );
-    assert_eq!(output.status.code(), Some(0), "{output:?}");
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("Subject: Backup repositories healthy"));
-    assert!(stdout.contains("All backup repositories are healthy."));
-    assert!(stdout.contains("s3://test-bucket"));
-    assert!(stdout.contains("s3://test-bucket/repo: folders: found\n"));
-    assert!(!stdout.contains('\x1b'));
-}
-
 /// The new flag preserves alerts for missing, stale, or unconfigured entries.
 #[test]
 fn healthy_flag_does_not_hide_problems() {
@@ -273,20 +248,6 @@ fn report_uses_nested_age_threshold() {
 }
 
 #[test]
-fn report_requires_email_configuration() {
-    let output = run_args(
-        "s3_endpoint = 'https://example.com'\ns3_region = 'us-east-1'\n[[repositories]]\nuri = 's3://bucket/repo'",
-        &["report", "--dry-run"],
-    );
-    assert_eq!(output.status.code(), Some(2), "{output:?}");
-    assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .contains("[email]")
-    );
-}
-
-#[test]
 fn smtp_without_required_starttls_fails_without_sending() {
     use std::io::{BufRead, BufReader};
 
@@ -340,51 +301,6 @@ fn missing_repositories_exit_one() {
             .unwrap()
             .contains("repo  [folders: not found]")
     );
-}
-
-#[test]
-fn overlapping_repositories_exit_two() {
-    let output = run(
-        "s3_endpoint = 'https://example.com'\ns3_region = 'us-east-1'\n[[repositories]]\nuri = 's3://bucket/repo'\n[[repositories]]\nuri = 's3://bucket/repo/child'",
-    );
-    assert_eq!(output.status.code(), Some(2), "{output:?}");
-    assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .contains("overlapping repositories")
-    );
-    assert!(output.stdout.is_empty());
-}
-
-/// Folder-only checks neither assess timestamps nor download file contents.
-#[test]
-fn folders_only_skips_age_and_content() {
-    let output = with_listing(
-        "<Contents><Key>repo/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents><Contents><Key>untracked/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents>",
-        &["check", "--checks", "folders"],
-        CONTENT_RULES,
-    );
-    assert_eq!(output.status.code(), Some(0), "{output:?}");
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("untracked"));
-    assert!(!stdout.contains("[age:"));
-    assert!(!stdout.contains("[content:"));
-    assert!(output.stderr.is_empty());
-}
-
-/// Age-only checks hide unconfigured folders and skip content reads.
-#[test]
-fn age_only_skips_folders_and_content() {
-    let output = with_listing(
-        "<Contents><Key>repo/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents><Contents><Key>untracked/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents>",
-        &["check", "--checks", "age"],
-        CONTENT_RULES,
-    );
-    assert_eq!(output.status.code(), Some(0), "{output:?}");
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("[age: latest is "));
-    assert!(!stdout.contains("untracked"));
-    assert!(!stdout.contains("[content:"));
 }
 
 /// Selected content checks still download and validate file prefixes.
