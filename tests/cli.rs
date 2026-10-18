@@ -77,9 +77,10 @@ fn with_s3_responses(responses: Vec<(u16, Vec<u8>)>, args: &[&str], extra_config
     output
 }
 
-const HEADER_RULES: &str = "[[repositories.header_check.rules]]\nglob = '**'\npattern = '^MAGIC'";
+const CONTENT_RULES: &str = "[[repositories.content_check.rules]]\nglob = '**'\npattern = '^MAGIC'";
 
-fn check_header(status: u16, bytes: &[u8], args: &[&str], extra: &str) -> Output {
+/// Run a recursive content check against a local S3 response sequence.
+fn check_content(status: u16, bytes: &[u8], args: &[&str], extra: &str) -> Output {
     let listing = format!(
         "<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>repo/deep/file</Key><LastModified>{}</LastModified></Contents></ListBucketResult>",
         chrono::Utc::now().to_rfc3339(),
@@ -87,25 +88,26 @@ fn check_header(status: u16, bytes: &[u8], args: &[&str], extra: &str) -> Output
     with_s3_responses(
         vec![(200, listing.into_bytes()), (status, bytes.to_vec())],
         args,
-        &format!("{HEADER_RULES}\n{extra}"),
+        &format!("{CONTENT_RULES}\n{extra}"),
     )
 }
 
+/// Content validation accepts matching prefixes and reports mismatches.
 #[test]
-fn check_accepts_valid_headers_and_rejects_invalid_headers() {
-    let output = check_header(206, b"MAGIC123", &["check"], "");
+fn check_accepts_valid_content_and_rejects_invalid_content() {
+    let output = check_content(206, b"MAGIC123", &["check"], "");
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(
         String::from_utf8(output.stdout)
             .unwrap()
-            .contains("header failures: 0/1")
+            .contains("content failures: 0/1")
     );
-    let output = check_header(206, b"WRONG", &["check"], "");
+    let output = check_content(206, b"WRONG", &["check"], "");
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     assert!(
         String::from_utf8(output.stdout)
             .unwrap()
-            .contains("header failures: 1/1")
+            .contains("content failures: 1/1")
     );
     assert!(
         String::from_utf8(output.stderr)
@@ -114,18 +116,20 @@ fn check_accepts_valid_headers_and_rejects_invalid_headers() {
     );
 }
 
+/// Content failures are included in the email preview without SMTP delivery.
 #[test]
-fn header_failures_appear_in_email_preview() {
-    let output = check_header(206, b"WRONG", &["report", "--dry-run"], EMAIL);
+fn content_failures_appear_in_email_preview() {
+    let output = check_content(206, b"WRONG", &["report", "--dry-run"], EMAIL);
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("[HEADER CHECK FAILED] s3://test-bucket/repo"));
+    assert!(stdout.contains("[CONTENT CHECK FAILED] s3://test-bucket/repo"));
     assert!(stdout.contains("deep/file"));
 }
 
+/// Read failures are execution errors, while empty mismatching files are findings.
 #[test]
-fn header_access_errors_exit_two_but_empty_files_exit_one() {
-    let output = check_header(
+fn content_access_errors_exit_two_but_empty_files_exit_one() {
+    let output = check_content(
         403,
         b"<Error><Code>AccessDenied</Code></Error>",
         &["check"],
@@ -133,7 +137,7 @@ fn header_access_errors_exit_two_but_empty_files_exit_one() {
     );
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     assert!(output.stdout.is_empty());
-    let output = check_header(
+    let output = check_content(
         416,
         b"<Error><Code>InvalidRange</Code></Error>",
         &["check"],
@@ -309,19 +313,19 @@ fn overlapping_repositories_exit_two() {
     assert!(output.stdout.is_empty());
 }
 
-/// Folder-only checks neither assess timestamps nor download configured headers.
+/// Folder-only checks neither assess timestamps nor download file contents.
 #[test]
 fn folders_only_skips_age_and_content() {
     let output = with_listing(
         "<Contents><Key>repo/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents><Contents><Key>untracked/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents>",
         &["check", "--checks", "folders"],
-        HEADER_RULES,
+        CONTENT_RULES,
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("untracked"));
     assert!(!stdout.contains("latest:"));
-    assert!(!stdout.contains("header failures"));
+    assert!(!stdout.contains("content failures"));
     assert!(output.stderr.is_empty());
 }
 
@@ -331,28 +335,28 @@ fn age_only_skips_folders_and_content() {
     let output = with_listing(
         "<Contents><Key>repo/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents><Contents><Key>untracked/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents>",
         &["check", "--checks", "age"],
-        HEADER_RULES,
+        CONTENT_RULES,
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("latest:"));
     assert!(!stdout.contains("untracked"));
-    assert!(!stdout.contains("header failures"));
+    assert!(!stdout.contains("content failures"));
 }
 
-/// Selected content checks still download and validate file headers.
+/// Selected content checks still download and validate file prefixes.
 #[test]
-fn content_selection_preserves_header_failures() {
+fn content_selection_preserves_validation_failures() {
     for checks in [
         "content",
         "folders,content",
         "folders,age,content",
         "content,content",
     ] {
-        let output = check_header(206, b"WRONG", &["check", "--checks", checks], "");
+        let output = check_content(206, b"WRONG", &["check", "--checks", checks], "");
         assert_eq!(output.status.code(), Some(1), "{checks}: {output:?}");
         let stdout = String::from_utf8(output.stdout).unwrap();
-        assert!(stdout.contains("header failures: 1/1"));
+        assert!(stdout.contains("content failures: 1/1"));
         assert_eq!(stdout.contains("latest:"), checks.contains("age"));
     }
 }

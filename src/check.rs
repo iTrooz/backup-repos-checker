@@ -1,4 +1,7 @@
-//! Inspect repository metadata and optional file headers, then render findings.
+//! Inspect repository metadata and optional file content, then render findings.
+
+/// Repository-specific byte-pattern validation.
+pub mod content;
 
 /// CLI check names and execution flags.
 pub mod selection;
@@ -12,16 +15,19 @@ use futures::{StreamExt, TryStreamExt};
 
 use crate::{
     config::{RepositoryLocation, contains},
-    header::{CHECK_CONCURRENCY, MAX_FAILURE_SAMPLES},
     storage::Storage,
 };
+
+// Bound scan work and retained diagnostics independently of the content validator.
+const CHECK_CONCURRENCY: usize = 8;
+const MAX_FAILURE_SAMPLES: usize = 10;
 
 #[derive(Debug, Default)]
 struct Repository {
     exists: bool,
     newest: Option<DateTime<Utc>>,
     checked_files: usize,
-    header_failures: usize,
+    content_failures: usize,
     failure_samples: Vec<String>,
 }
 
@@ -45,7 +51,7 @@ enum Status {
     Fresh,
     Stale,
     Missing,
-    InvalidHeaders,
+    InvalidContent,
     Unconfigured,
     Group,
 }
@@ -67,7 +73,7 @@ impl Folder {
     /// Only enabled folder and content failures affect the health exit code.
     pub fn failed(&self, checks: Selection) -> bool {
         self.repository.as_ref().is_some_and(|repo| {
-            (checks.folders && !repo.exists) || (checks.content && repo.header_failures > 0)
+            (checks.folders && !repo.exists) || (checks.content && repo.content_failures > 0)
         }) || self.children.values().any(|child| child.failed(checks))
     }
 
@@ -81,7 +87,7 @@ impl Folder {
                     Status::Group
                 }
             }
-            Some(repo) if checks.content && repo.header_failures > 0 => Status::InvalidHeaders,
+            Some(repo) if checks.content && repo.content_failures > 0 => Status::InvalidContent,
             Some(repo) if checks.age => {
                 if repo.newest.is_some_and(|modified| modified >= cutoff) {
                     Status::Fresh
@@ -116,15 +122,16 @@ impl Folder {
         issues
     }
 
-    fn header_failure(&self, path: &str) -> Option<String> {
+    /// Format aggregated content failures with bounded offending-path samples.
+    fn content_failure(&self, path: &str) -> Option<String> {
         let repo = self.repository.as_ref()?;
-        (repo.header_failures > 0).then(|| {
+        (repo.content_failures > 0).then(|| {
             format!(
-                "[HEADER CHECK FAILED] {path} ({}/{} files failed): {}{}",
-                repo.header_failures,
+                "[CONTENT CHECK FAILED] {path} ({}/{} files failed): {}{}",
+                repo.content_failures,
                 repo.checked_files,
                 repo.failure_samples.join("; "),
-                if repo.header_failures > repo.failure_samples.len() {
+                if repo.content_failures > repo.failure_samples.len() {
                     "; additional failures omitted"
                 } else {
                     ""
@@ -134,13 +141,13 @@ impl Folder {
     }
 
     /// Return bounded content diagnostics only when content checks are enabled.
-    pub fn header_diagnostics(&self, path: &str, checks: Selection) -> Vec<String> {
+    pub fn content_diagnostics(&self, path: &str, checks: Selection) -> Vec<String> {
         if !checks.content {
             return Vec::new();
         }
-        let mut issues: Vec<_> = self.header_failure(path).into_iter().collect();
+        let mut issues: Vec<_> = self.content_failure(path).into_iter().collect();
         for (name, child) in &self.children {
-            issues.extend(child.header_diagnostics(&format!("{path}/{name}"), checks));
+            issues.extend(child.content_diagnostics(&format!("{path}/{name}"), checks));
         }
         issues
     }
@@ -155,12 +162,12 @@ impl Folder {
     ) {
         match self.status(cutoff, checks) {
             Status::Missing => issues.push(format!("[MISSING] {path}")),
-            Status::InvalidHeaders => {
+            Status::InvalidContent => {
                 let repo = self
                     .repository
                     .as_ref()
-                    .expect("repository with invalid headers");
-                issues.push(self.header_failure(path).expect("invalid headers"));
+                    .expect("repository with invalid content");
+                issues.push(self.content_failure(path).expect("invalid content"));
                 if checks.age && repo.newest.is_none_or(|modified| modified < cutoff) {
                     issues.push(format!("[STALE] {path}"));
                 }
@@ -223,7 +230,7 @@ impl Folder {
             Status::Fresh => "32",
             Status::Stale => "33",
             Status::Missing => "31;4",
-            Status::InvalidHeaders => "31",
+            Status::InvalidContent => "31",
             Status::Unconfigured => "31",
             Status::Group => "",
         };
@@ -245,8 +252,8 @@ impl Folder {
             && repo.checked_files > 0
         {
             detail.push_str(&format!(
-                "  [header failures: {}/{}]",
-                repo.header_failures, repo.checked_files
+                "  [content failures: {}/{}]",
+                repo.content_failures, repo.checked_files
             ));
         }
         output.push_str(indent);
@@ -281,7 +288,7 @@ impl Folder {
     }
 }
 
-/// List every repository, downloading headers only when content is selected.
+/// List every repository, downloading prefixes only when content is selected.
 pub async fn inspect(
     storage: &dyn Storage,
     repositories: &[RepositoryLocation<'_>],
@@ -293,7 +300,7 @@ pub async fn inspect(
         root.at(repository.prefix).repository = Some(Repository::default());
     }
     let entries = storage.list().await?;
-    // Bound concurrent header downloads while preserving listing order for diagnostics.
+    // Bound concurrent prefix downloads while preserving listing order for diagnostics.
     let mut inspected = entries
         .map(|entry| async move {
             let entry = entry?;
@@ -305,11 +312,11 @@ pub async fn inspect(
             });
             let mut checked = false;
             let mut failure = None;
-            // Read headers only for opted-in repositories, never for directory markers.
+            // Read content only for opted-in repositories, never for directory markers.
             if checks.content
                 && !entry.path.ends_with('/')
                 && let Some(repository) = repository
-                && let Some(header_check) = repository.header_check
+                && let Some(content_check) = repository.content_check
             {
                 checked = true;
                 // Rules use repository-relative paths; bucket-root repos already have those.
@@ -318,7 +325,7 @@ pub async fn inspect(
                 } else {
                     &entry.path[repository.prefix.len() + 1..]
                 };
-                failure = header_check
+                failure = content_check
                     .check(storage, &entry.path, relative)
                     .await?
                     .map(|reason| format!("{relative:?}: {reason}"));
@@ -341,7 +348,7 @@ pub async fn inspect(
             }
             if let Some(failure) = failure {
                 // Count every failure, but retain only a bounded sample of offending paths.
-                repo.header_failures += 1;
+                repo.content_failures += 1;
                 if repo.failure_samples.len() < MAX_FAILURE_SAMPLES {
                     repo.failure_samples.push(failure);
                 }
@@ -366,126 +373,6 @@ pub async fn inspect(
     Ok(root)
 }
 
-/// Freshness and folder-tree behavior under the default selection.
+/// Scan behavior grouped by age, folders, content, and check selection.
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::storage::FileEntry;
-    use async_trait::async_trait;
-    use futures::{stream, stream::BoxStream};
-
-    struct FakeStorage(Vec<(&'static str, DateTime<Utc>)>);
-
-    #[async_trait]
-    impl Storage for FakeStorage {
-        async fn read_prefix(&self, _path: &str, _length: usize) -> Result<Vec<u8>> {
-            panic!("freshness-only checks must not download objects");
-        }
-        async fn list(&self) -> Result<BoxStream<'_, Result<FileEntry>>> {
-            Ok(Box::pin(stream::iter(self.0.iter().map(
-                |(path, modified)| {
-                    Ok(FileEntry {
-                        path: (*path).to_owned(),
-                        modified: *modified,
-                    })
-                },
-            ))))
-        }
-    }
-
-    /// Adapt freshness fixtures to the full default selection.
-    async fn inspect(storage: &dyn Storage, prefixes: &[String]) -> Result<Folder> {
-        let repositories: Vec<_> = prefixes
-            .iter()
-            .map(|prefix| RepositoryLocation {
-                prefix,
-                header_check: None,
-            })
-            .collect();
-        super::inspect(storage, &repositories, Selection::default()).await
-    }
-
-    #[tokio::test]
-    async fn recursive_freshness_and_tree_colors() {
-        let now = Utc::now();
-        let storage = FakeStorage(vec![
-            ("backups/fresh/deep/file", now - TimeDelta::days(7)),
-            ("backups/fresh/old", now - TimeDelta::days(20)),
-            ("backups/stale/file", now - TimeDelta::days(8)),
-            ("backups/empty/", now),
-            ("untracked/child/file", now),
-        ]);
-        let prefixes =
-            ["backups/fresh", "backups/stale", "backups/empty", "missing"].map(str::to_owned);
-        let tree = inspect(&storage, &prefixes).await.unwrap();
-        let rendered = tree.render("s3://test", now, 7, true, Selection::default());
-        assert!(rendered.contains("\x1b[32mfresh"));
-        assert!(rendered.contains("\x1b[33mstale"));
-        assert!(rendered.contains("\x1b[33mempty  [no files]"));
-        assert!(rendered.contains("\x1b[31;4mmissing  [not found]"));
-        assert!(rendered.contains("\x1b[31muntracked"));
-        assert!(!rendered.contains("deep"));
-        assert!(!rendered.contains("\x1b[31mbackups"));
-        assert!(tree.failed(Selection::default()));
-        assert!(
-            !tree
-                .render("s3://test", now, 7, false, Selection::default())
-                .contains('\x1b')
-        );
-        let issues = tree.issues("s3://test", now, 7, Selection::default());
-        assert_eq!(issues.len(), 5);
-        assert!(
-            issues
-                .iter()
-                .any(|issue| issue == "[MISSING] s3://test/missing")
-        );
-        assert!(
-            issues
-                .iter()
-                .any(|issue| issue == "[UNCONFIGURED] s3://test/untracked/child")
-        );
-        assert!(
-            issues
-                .iter()
-                .any(|issue| issue.starts_with("[STALE] s3://test/backups/empty (no files)"))
-        );
-        assert!(
-            !issues
-                .iter()
-                .any(|issue| issue.contains("fresh") || issue.contains("deep"))
-        );
-    }
-
-    #[tokio::test]
-    async fn exact_object_and_similar_prefix_do_not_establish_existence() {
-        let storage = FakeStorage(vec![("repo", Utc::now()), ("repository/file", Utc::now())]);
-        assert!(
-            inspect(&storage, &["repo".to_owned()])
-                .await
-                .unwrap()
-                .failed(Selection::default())
-        );
-    }
-
-    #[tokio::test]
-    async fn listing_errors_propagate() {
-        struct Broken;
-        #[async_trait]
-        impl Storage for Broken {
-            async fn read_prefix(&self, _path: &str, _length: usize) -> Result<Vec<u8>> {
-                unreachable!()
-            }
-            async fn list(&self) -> Result<BoxStream<'_, Result<FileEntry>>> {
-                Ok(Box::pin(stream::iter([Err(anyhow::anyhow!(
-                    "listing failed"
-                ))])))
-            }
-        }
-        assert!(inspect(&Broken, &["repo".to_owned()]).await.is_err());
-    }
-}
-
-/// Content-check tests kept separate to keep production modules small.
-#[cfg(test)]
-#[path = "check/header_tests.rs"]
-mod header_tests;
+mod tests;

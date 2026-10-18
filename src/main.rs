@@ -2,7 +2,6 @@
 
 mod check;
 mod config;
-mod header;
 mod report;
 mod storage;
 
@@ -97,7 +96,7 @@ async fn run(cli: Cli) -> Result<bool> {
                     "{}",
                     tree.render(&format!("s3://{bucket}"), now, max_age_days, color, checks)
                 )?;
-                for diagnostic in tree.header_diagnostics(&format!("s3://{bucket}"), checks) {
+                for diagnostic in tree.content_diagnostics(&format!("s3://{bucket}"), checks) {
                     eprintln!("{diagnostic}");
                 }
             }

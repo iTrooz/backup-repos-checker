@@ -36,13 +36,13 @@ impl Default for AgeCheckConfig {
 #[serde(deny_unknown_fields)]
 pub struct RepositoryConfig {
     pub uri: String,
-    pub header_check: Option<crate::header::HeaderCheck>,
+    pub content_check: Option<crate::check::content::ContentCheck>,
 }
 
 #[derive(Clone, Copy)]
 pub struct RepositoryLocation<'a> {
     pub prefix: &'a str,
-    pub header_check: Option<&'a crate::header::HeaderCheck>,
+    pub content_check: Option<&'a crate::check::content::ContentCheck>,
 }
 
 impl Config {
@@ -103,7 +103,7 @@ impl Config {
             }
             prefixes.push(RepositoryLocation {
                 prefix,
-                header_check: config.header_check.as_ref(),
+                content_check: config.content_check.as_ref(),
             });
         }
         Ok(buckets)
@@ -189,23 +189,24 @@ mod tests {
         Config::parse(include_str!("../config.example.toml")).unwrap();
     }
 
+    /// Compile content rules during parsing and reject malformed configuration.
     #[test]
-    fn header_rules_are_validated_when_loading_config() {
+    fn content_rules_are_validated_when_loading_config() {
         let base = "s3_endpoint = 'https://example.com'\ns3_region = 'test'\n[[repositories]]\nuri = 's3://bucket/repo'\n";
-        for header in [
-            "[repositories.header_check]\nrules = []",
-            "[[repositories.header_check.rules]]\nglob = '**'\npattern = '('",
-            "[[repositories.header_check.rules]]\nglob = '['\npattern = '^x'",
-            "[repositories.header_check]\nread_bytes = 64\n[[repositories.header_check.rules]]\nglob = '**'\npattern = '^x'",
+        for content in [
+            "[repositories.content_check]\nrules = []",
+            "[[repositories.content_check.rules]]\nglob = '**'\npattern = '('",
+            "[[repositories.content_check.rules]]\nglob = '['\npattern = '^x'",
+            "[repositories.content_check]\nread_bytes = 64\n[[repositories.content_check.rules]]\nglob = '**'\npattern = '^x'",
         ] {
             assert!(
-                Config::parse(&format!("{base}{header}")).is_err(),
-                "{header}"
+                Config::parse(&format!("{base}{content}")).is_err(),
+                "{content}"
             );
         }
         assert!(
             Config::parse(&format!(
-                "{base}[[repositories.header_check.rules]]\nglob = '**'\npattern = '^\\xff'"
+                "{base}[[repositories.content_check.rules]]\nglob = '**'\npattern = '^\\xff'"
             ))
             .is_ok()
         );
