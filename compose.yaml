@@ -4,13 +4,6 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
-    environment:
-      CRON_SCHEDULE: ${CRON_SCHEDULE}
-      HEALTHY_CRON_SCHEDULE: ${HEALTHY_CRON_SCHEDULE}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
-      SMTP_USERNAME: ${SMTP_USERNAME}
-      SMTP_PASSWORD: ${SMTP_PASSWORD}
+    env_file: .env
     volumes:
       - ./config.toml:/config/config.toml
