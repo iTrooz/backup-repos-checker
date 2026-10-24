@@ -22,9 +22,9 @@ fn check_and_report_use_the_same_findings() {
     ] {
         assert!(outputs[0].contains(&format!("[{message}]")));
         assert!(
-            outputs[1]
-                .lines()
-                .any(|line| line.starts_with(&format!("s3://test-bucket/repo: {message}")))
+            outputs[1].lines().any(
+                |line| line.starts_with(&format!("[primary] s3://test-bucket/repo: {message}"))
+            )
         );
     }
     assert!(outputs[1].contains("2 problematic entries"));
@@ -34,7 +34,7 @@ fn check_and_report_use_the_same_findings() {
 
 /// Healthy reports format informational findings per line rather than building another tree.
 #[test]
-fn healthy_reports_list_findings_without_brackets() {
+fn healthy_reports_list_findings_without_tree_decorations() {
     let contents = format!(
         "<Contents><Key>repo/file</Key><LastModified>{}</LastModified></Contents>",
         chrono::Utc::now().to_rfc3339()
@@ -49,12 +49,12 @@ fn healthy_reports_list_findings_without_brackets() {
     assert!(
         stdout
             .lines()
-            .any(|line| line == "s3://test-bucket/repo: folders: found")
+            .any(|line| line == "[primary] s3://test-bucket/repo: folders: found")
     );
     assert!(
         stdout
             .lines()
-            .any(|line| line.starts_with("s3://test-bucket/repo: age: latest is "))
+            .any(|line| line.starts_with("[primary] s3://test-bucket/repo: age: latest is "))
     );
-    assert!(!stdout.contains('[') && !stdout.contains("└──"));
+    assert!(!stdout.contains("[folders:") && !stdout.contains("└──"));
 }

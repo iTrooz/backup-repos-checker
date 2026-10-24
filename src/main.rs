@@ -17,8 +17,11 @@ use clap::{Parser, Subcommand};
 use findings::selection::{Kind, Selection};
 
 #[derive(Parser)]
-#[command(version, about = "Check backup repository activity in S3")]
+#[command(version, about = "Check backup repositories across storage providers")]
 struct Cli {
+    /// Check only this named provider instead of every configured provider.
+    #[arg(long, global = true)]
+    provider: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -71,6 +74,12 @@ async fn run(cli: Cli) -> Result<bool> {
     };
     let text = std::fs::read_to_string("config.toml").context("cannot read ./config.toml")?;
     let config = config::Config::parse(&text)?;
+    if let Some(name) = &cli.provider {
+        anyhow::ensure!(
+            config.providers.contains_key(name),
+            "unknown provider: {name}"
+        );
+    }
     let max_age_days = config.checks.age.max_age_days;
     let email = if matches!(cli.command, Command::Report { .. }) {
         let email = config
@@ -83,50 +92,74 @@ async fn run(cli: Cli) -> Result<bool> {
         None
     };
     let mut trees = Vec::new();
-    for (bucket, prefixes) in config.buckets()? {
-        let storage = storage::S3Storage::new(&config, &bucket)?;
-        let tree = findings::inspect(&storage, &prefixes, checks)
+    let buckets = config.buckets()?;
+    for (name, provider) in &config.providers {
+        if cli
+            .provider
+            .as_ref()
+            .is_some_and(|selected| selected != name)
+        {
+            continue;
+        }
+        for (bucket, prefixes) in &buckets {
+            let tree = async {
+                let storage = provider.storage(bucket)?;
+                findings::inspect(storage.as_ref(), prefixes, checks).await
+            }
             .await
-            .with_context(|| format!("cannot check s3://{bucket}"))?;
-        trees.push((bucket, tree));
+            .with_context(|| format!("cannot check provider {name}: s3://{bucket}"))?;
+            trees.push((name, bucket, tree));
+        }
     }
     // Only render or send after every listing succeeds: never report partial results.
     let now = Utc::now();
     // Evaluate once: both commands consume the same structured check results.
     let findings: Vec<_> = trees
         .iter()
-        .flat_map(|(bucket, tree)| {
+        .map(|(_, bucket, tree)| {
             findings::findings(tree, &format!("s3://{bucket}"), now, max_age_days, checks)
         })
         .collect();
-    let failed = findings.iter().any(|finding| finding.fatal);
+    let failed = findings.iter().flatten().any(|finding| finding.fatal);
     match cli.command {
         Command::Check { all, .. } => {
             let color = io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
             let mut stdout = io::stdout().lock();
-            for (bucket, tree) in trees {
+            for ((provider, bucket, tree), findings) in trees.iter().zip(&findings) {
+                writeln!(stdout, "Provider: {provider}")?;
                 write!(
                     stdout,
                     "{}",
-                    check::render(&tree, &format!("s3://{bucket}"), &findings, color, all)
+                    check::render(tree, &format!("s3://{bucket}"), findings, color, all)
                 )?;
             }
             // Preserve offending-file diagnostics, formatting the same findings rather than rechecking.
-            for finding in findings
-                .iter()
-                .filter(|finding| !finding.details.is_empty())
-            {
-                eprintln!("{}", finding.line());
+            for ((provider, _, _), findings) in trees.iter().zip(&findings) {
+                for finding in findings
+                    .iter()
+                    .filter(|finding| !finding.details.is_empty())
+                {
+                    eprintln!("[{provider}] {}", finding.line());
+                }
             }
         }
         Command::Report {
             dry_run,
             send_even_if_healthy,
         } => {
-            let issues: Vec<_> = findings
+            let lines: Vec<_> = trees
                 .iter()
-                .filter(|finding| finding.is_issue())
-                .map(findings::Finding::line)
+                .zip(&findings)
+                .flat_map(|((provider, _, _), findings)| {
+                    findings
+                        .iter()
+                        .map(move |finding| (finding, format!("[{provider}] {}", finding.line())))
+                })
+                .collect();
+            let issues: Vec<_> = lines
+                .iter()
+                .filter(|(finding, _)| finding.is_issue())
+                .map(|(_, line)| line.clone())
                 .collect();
             if issues.is_empty() && !send_even_if_healthy {
                 println!("No red or yellow entries; no email sent.");
@@ -140,9 +173,9 @@ async fn run(cli: Cli) -> Result<bool> {
                     &email.subject
                 };
                 let body = if healthy {
-                    let lines = findings
+                    let lines = lines
                         .iter()
-                        .map(findings::Finding::line)
+                        .map(|(_, line)| line.as_str())
                         .collect::<Vec<_>>()
                         .join("\n");
                     report::healthy_body(&lines, max_age_days)

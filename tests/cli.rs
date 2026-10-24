@@ -9,11 +9,20 @@ mod common;
 /// Check and report format the same independently evaluated findings.
 #[path = "cli/findings.rs"]
 mod findings;
+/// Named provider routing, credentials, and independent results for mirrored paths.
+#[path = "cli/providers.rs"]
+mod providers;
 /// Config-driven repository exclusions for both CLI commands.
 #[path = "cli/silencing.rs"]
 mod silencing;
 
+/// Run the CLI with conventional test credentials.
 fn run_args(config: &str, args: &[&str]) -> Output {
+    run_args_with_env(config, args, &[])
+}
+
+/// Supply provider-specific credentials without changing the test process environment.
+fn run_args_with_env(config: &str, args: &[&str], env: &[(&str, &str)]) -> Output {
     let directory = common::temp_dir();
     std::fs::write(directory.path().join("config.toml"), config).unwrap();
     Command::new(env!("CARGO_BIN_EXE_backup-repos-checker"))
@@ -24,6 +33,7 @@ fn run_args(config: &str, args: &[&str]) -> Output {
         .env_remove("AWS_SESSION_TOKEN")
         .env("SMTP_USERNAME", "test")
         .env("SMTP_PASSWORD", "test")
+        .envs(env.iter().copied())
         .output()
         .unwrap()
 }
@@ -70,7 +80,7 @@ fn with_s3_responses(responses: Vec<(u16, Vec<u8>)>, args: &[&str], extra_config
     });
     let output = run_args(
         &format!(
-            "s3_endpoint = '{endpoint}'\ns3_region = 'us-east-1'\n[[repositories]]\nuri = 's3://test-bucket/repo'\n{extra_config}"
+            "[providers.primary]\ntype = 's3'\nendpoint = '{endpoint}'\nregion = 'us-east-1'\naccess_key_id_env = 'AWS_ACCESS_KEY_ID'\nsecret_access_key_env = 'AWS_SECRET_ACCESS_KEY'\n[[repositories]]\nuri = 's3://test-bucket/repo'\n{extra_config}"
         ),
         args,
     );

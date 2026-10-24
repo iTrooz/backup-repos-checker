@@ -6,12 +6,62 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    pub s3_endpoint: String,
-    pub s3_region: String,
+    pub providers: BTreeMap<String, ProviderConfig>,
     #[serde(default)]
     pub checks: ChecksConfig,
     pub repositories: Vec<RepositoryConfig>,
     pub email: Option<crate::report::EmailConfig>,
+}
+
+/// Named storage backend settings, selected by an explicit provider type.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+pub enum ProviderConfig {
+    S3(S3Config),
+}
+
+/// S3 connection settings and environment variable names for credentials.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct S3Config {
+    pub endpoint: String,
+    pub region: String,
+    pub access_key_id_env: String,
+    pub secret_access_key_env: String,
+    pub session_token_env: Option<String>,
+}
+
+impl ProviderConfig {
+    /// Validate connection settings without loading credentials or contacting storage.
+    fn validate(&self) -> Result<()> {
+        match self {
+            Self::S3(config) => {
+                let endpoint = url::Url::parse(&config.endpoint).context("invalid S3 endpoint")?;
+                ensure!(
+                    matches!(endpoint.scheme(), "http" | "https") && endpoint.host_str().is_some(),
+                    "S3 endpoint must be an HTTP(S) URL"
+                );
+                ensure!(
+                    !config.region.trim().is_empty(),
+                    "S3 region cannot be empty"
+                );
+                for name in [
+                    Some(&config.access_key_id_env),
+                    Some(&config.secret_access_key_env),
+                    config.session_token_env.as_ref(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    ensure!(
+                        !name.trim().is_empty() && !name.contains(['=', '\0']),
+                        "invalid credential environment variable name"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -53,15 +103,22 @@ pub struct RepositoryLocation<'a> {
 impl Config {
     pub fn parse(text: &str) -> Result<Self> {
         let config: Self = toml::from_str(text).context("invalid config.toml")?;
-        let endpoint = url::Url::parse(&config.s3_endpoint).context("invalid S3 endpoint")?;
         ensure!(
-            matches!(endpoint.scheme(), "http" | "https") && endpoint.host_str().is_some(),
-            "S3 endpoint must be an HTTP(S) URL"
+            !config.providers.is_empty(),
+            "configure at least one provider"
         );
-        ensure!(
-            !config.s3_region.trim().is_empty(),
-            "S3 region cannot be empty"
-        );
+        for (name, provider) in &config.providers {
+            ensure!(
+                !name.is_empty()
+                    && name
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'),
+                "provider names must contain only letters, digits, hyphens, or underscores"
+            );
+            provider
+                .validate()
+                .with_context(|| format!("invalid provider {name}"))?;
+        }
         ensure!(
             config.checks.age.max_age_days > 0,
             "checks.age.max_age_days must be positive"
@@ -128,15 +185,16 @@ pub fn contains(prefix: &str, path: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// Shared provider settings with conventional AWS credential variable names.
+    const PROVIDER: &str = "[providers.primary]\ntype = 's3'\nendpoint = 'https://example.com'\nregion = 'test'\naccess_key_id_env = 'AWS_ACCESS_KEY_ID'\nsecret_access_key_env = 'AWS_SECRET_ACCESS_KEY'\n";
+
     fn config(repositories: &str) -> Result<Config> {
         let repositories = repositories
             .split(',')
             .map(|uri| format!("[[repositories]]\nuri = {}", uri.trim()))
             .collect::<Vec<_>>()
             .join("\n");
-        Config::parse(&format!(
-            "s3_endpoint = 'https://example.com'\ns3_region = 'test'\n{repositories}"
-        ))
+        Config::parse(&format!("{PROVIDER}{repositories}"))
     }
 
     #[test]
@@ -148,7 +206,7 @@ mod tests {
 
     #[test]
     fn age_check_section_defaults_and_overrides() {
-        let base = "s3_endpoint = 'https://example.com'\ns3_region = 'test'\n[[repositories]]\nuri = 's3://bucket/repo'\n";
+        let base = format!("{PROVIDER}[[repositories]]\nuri = 's3://bucket/repo'\n");
         for section in ["[checks]", "[checks.age]"] {
             let config = Config::parse(&format!("{base}{section}")).unwrap();
             assert_eq!(config.checks.age.max_age_days, 7);
@@ -195,10 +253,40 @@ mod tests {
         Config::parse(include_str!("../config.example.toml")).unwrap();
     }
 
+    /// Reject unsupported provider types and malformed settings before scanning storage.
+    #[test]
+    fn rejects_invalid_provider_configuration() {
+        let repository = "[[repositories]]\nuri = 's3://bucket/repo'\n";
+        for provider in [
+            "[providers]\n".to_owned(),
+            PROVIDER.replace("type = 's3'", "type = 'filesystem'"),
+            PROVIDER.replace("https://example.com", "file:///backups"),
+            PROVIDER.replace("region = 'test'", "region = ''"),
+            PROVIDER.replace("'AWS_ACCESS_KEY_ID'", "''"),
+            PROVIDER.replace("'AWS_SECRET_ACCESS_KEY'", "'BAD=NAME'"),
+            PROVIDER.replace("providers.primary", "providers.'bad name'"),
+            format!("{PROVIDER}session_token_env = ''\n"),
+            format!("{PROVIDER}unknown = true\n"),
+            PROVIDER.replace("secret_access_key_env = 'AWS_SECRET_ACCESS_KEY'\n", ""),
+        ] {
+            assert!(
+                Config::parse(&format!("{provider}{repository}")).is_err(),
+                "{provider}"
+            );
+        }
+        assert!(Config::parse(repository).is_err());
+        assert!(
+            Config::parse(&format!(
+                "s3_endpoint = 'https://example.com'\ns3_region = 'test'\n{repository}"
+            ))
+            .is_err()
+        );
+    }
+
     /// Compile content rules during parsing and reject malformed configuration.
     #[test]
     fn content_rules_are_validated_when_loading_config() {
-        let base = "s3_endpoint = 'https://example.com'\ns3_region = 'test'\n[[repositories]]\nuri = 's3://bucket/repo'\n";
+        let base = format!("{PROVIDER}[[repositories]]\nuri = 's3://bucket/repo'\n");
         for content in [
             "[repositories.content_check]\nrules = []",
             "[[repositories.content_check.rules]]\nglob = '**'\npattern = '('",
@@ -221,9 +309,9 @@ mod tests {
     /// Silencing defaults to empty and accepts only known check names.
     #[test]
     fn repository_silencing_is_validated_and_forwarded() {
-        let base = "s3_endpoint = 'https://example.com'\ns3_region = 'test'\n[[repositories]]\nuri = 's3://bucket/repo'\n";
+        let base = format!("{PROVIDER}[[repositories]]\nuri = 's3://bucket/repo'\n");
         assert!(
-            Config::parse(base).unwrap().repositories[0]
+            Config::parse(&base).unwrap().repositories[0]
                 .silence_checks
                 .is_empty()
         );

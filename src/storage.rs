@@ -9,7 +9,16 @@ use futures::stream::BoxStream;
 use futures::{StreamExt, stream};
 use tokio::io::AsyncReadExt;
 
-use crate::config::Config;
+use crate::config::{ProviderConfig, S3Config};
+
+impl ProviderConfig {
+    /// Create a bucket-scoped backend, loading only this provider's credentials.
+    pub fn storage(&self, bucket: &str) -> Result<Box<dyn Storage>> {
+        match self {
+            Self::S3(config) => Ok(Box::new(S3Storage::new(config, bucket)?)),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct FileEntry {
@@ -32,26 +41,28 @@ pub struct S3Storage {
 }
 
 impl S3Storage {
-    pub fn new(config: &Config, bucket: &str) -> Result<Self> {
-        let access_key =
-            std::env::var("AWS_ACCESS_KEY_ID").context("AWS_ACCESS_KEY_ID must be set")?;
-        let secret_key =
-            std::env::var("AWS_SECRET_ACCESS_KEY").context("AWS_SECRET_ACCESS_KEY must be set")?;
+    /// Build an S3 client using this provider's endpoint and credential environment.
+    pub fn new(config: &S3Config, bucket: &str) -> Result<Self> {
+        let access_key = std::env::var(&config.access_key_id_env)
+            .with_context(|| format!("{} must be set", config.access_key_id_env))?;
+        let secret_key = std::env::var(&config.secret_access_key_env)
+            .with_context(|| format!("{} must be set", config.secret_access_key_env))?;
         anyhow::ensure!(
             !access_key.is_empty() && !secret_key.is_empty(),
             "S3 credentials cannot be empty"
         );
-        let credentials = Credentials::new(
-            access_key,
-            secret_key,
-            std::env::var("AWS_SESSION_TOKEN").ok(),
-            None,
-            "environment",
-        );
+        let session_token = config
+            .session_token_env
+            .as_ref()
+            .map(|name| std::env::var(name).with_context(|| format!("{name} must be set")))
+            .transpose()?
+            .filter(|token| !token.is_empty());
+        let credentials =
+            Credentials::new(access_key, secret_key, session_token, None, "environment");
         let sdk_config = aws_sdk_s3::config::Builder::new()
             .behavior_version(BehaviorVersion::latest())
-            .region(Region::new(config.s3_region.clone()))
-            .endpoint_url(&config.s3_endpoint)
+            .region(Region::new(config.region.clone()))
+            .endpoint_url(&config.endpoint)
             .credentials_provider(credentials)
             .force_path_style(true)
             .build();

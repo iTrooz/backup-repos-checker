@@ -1,5 +1,19 @@
-s3_endpoint = "https://s3.example.com"
-s3_region = "us-east-1"
+# Every provider checks the shared repositories below, with the same bucket names and paths.
+[providers.primary]
+type = "s3"
+endpoint = "https://s3.example.com"
+region = "us-east-1"
+access_key_id_env = "AWS_ACCESS_KEY_ID"
+secret_access_key_env = "AWS_SECRET_ACCESS_KEY"
+# Optional: name of an environment variable containing a temporary session token.
+# session_token_env = "AWS_SESSION_TOKEN"
+
+[providers.mirror]
+type = "s3"
+endpoint = "https://mirror.example.com"
+region = "us-east-1"
+access_key_id_env = "MIRROR_ACCESS_KEY_ID"
+secret_access_key_env = "MIRROR_SECRET_ACCESS_KEY"
 
 [checks.age]
 max_age_days = 7
