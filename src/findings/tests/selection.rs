@@ -15,6 +15,7 @@ async fn disabled_content_never_reads_objects() {
     let repositories = [RepositoryLocation {
         prefix: "repo",
         content_check: Some(&content_check),
+        max_size: None,
         silence_checks: &[],
     }];
     let checks = Selection::from_kinds(&[Kind::Folders, Kind::Age]);
@@ -34,6 +35,8 @@ fn tree_does_not_retain_check_selection() {
     tree.at("parent/repo").repository = Some(Repository {
         exists: true,
         newest: Some(now - TimeDelta::days(10)),
+        size: 0,
+        max_size: None,
         checked_files: 1,
         content_failures: 1,
         failure_samples: vec!["file: invalid content".to_owned()],

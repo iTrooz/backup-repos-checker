@@ -12,6 +12,8 @@ use super::{
 pub struct Repository {
     pub(super) exists: bool,
     pub(super) newest: Option<DateTime<Utc>>,
+    pub(super) size: u64,
+    pub(super) max_size: Option<u64>,
     pub(super) checked_files: usize,
     pub(super) content_failures: usize,
     pub(super) failure_samples: Vec<String>,
@@ -87,6 +89,38 @@ impl Repository {
             }
 
             results.push(finding);
+        }
+
+        // Size limits are optional; repositories without one have no size finding to evaluate.
+        if checks.size
+            && let Some(limit) = self.max_size
+        {
+            let exceeded = self.size > limit;
+            let message = if exceeded {
+                format!(
+                    "{} exceeds limit {}",
+                    crate::size::format(self.size),
+                    crate::size::format(limit)
+                )
+            } else {
+                format!(
+                    "{} (limit {})",
+                    crate::size::format(self.size),
+                    crate::size::format(limit)
+                )
+            };
+
+            results.push(Finding::new(
+                uri,
+                Kind::Size,
+                if exceeded {
+                    Severity::Error
+                } else {
+                    Severity::Passed
+                },
+                message,
+                exceeded,
+            ));
         }
 
         results

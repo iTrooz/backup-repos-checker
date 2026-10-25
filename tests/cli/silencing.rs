@@ -6,7 +6,7 @@ use super::*;
 #[test]
 fn silenced_content_does_not_download_files() {
     let contents = format!(
-        "<Contents><Key>repo/file</Key><LastModified>{}</LastModified></Contents>",
+        "<Contents><Key>repo/file</Key><LastModified>{}</LastModified><Size>0</Size></Contents>",
         chrono::Utc::now().to_rfc3339()
     );
     let output = with_listing(
@@ -16,7 +16,7 @@ fn silenced_content_does_not_download_files() {
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("repo (1 files)"));
+    assert!(stdout.contains("repo (1 files, 0 B)"));
     assert!(!stdout.contains("[content:"));
     assert!(output.stderr.is_empty());
 }
@@ -24,7 +24,7 @@ fn silenced_content_does_not_download_files() {
 /// Reports respect repository exclusions, including when deciding whether healthy mail is due.
 #[test]
 fn silenced_age_is_not_an_alert() {
-    let contents = "<Contents><Key>repo/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents>";
+    let contents = "<Contents><Key>repo/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified><Size>0</Size></Contents>";
     let config = format!("silence_checks = ['age']\n{EMAIL}");
     let output = with_listing(contents, &["report", "--dry-run"], &config);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
@@ -50,6 +50,6 @@ fn silenced_missing_repository_does_not_fail() {
     let output = with_listing("", &["check"], "silence_checks = ['folders']");
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("repo (0 files)"));
+    assert!(stdout.contains("repo (0 files, 0 B)"));
     assert!(!stdout.contains("not found"));
 }

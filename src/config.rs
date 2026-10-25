@@ -88,6 +88,8 @@ impl Default for AgeCheckConfig {
 pub struct RepositoryConfig {
     pub uri: String,
     pub content_check: Option<crate::findings::content::ContentCheck>,
+    /// Optional maximum total size, such as "100GiB".
+    pub max_size: Option<String>,
     #[serde(default)]
     pub silence_checks: Vec<crate::findings::selection::Kind>,
 }
@@ -97,6 +99,7 @@ pub struct RepositoryConfig {
 pub struct RepositoryLocation<'a> {
     pub prefix: &'a str,
     pub content_check: Option<&'a crate::findings::content::ContentCheck>,
+    pub max_size: Option<u64>,
     pub silence_checks: &'a [crate::findings::selection::Kind],
 }
 
@@ -163,9 +166,16 @@ impl Config {
                     "duplicate or overlapping repositories: s3://{bucket}/{existing} and {repository}"
                 );
             }
+            let max_size = config
+                .max_size
+                .as_deref()
+                .map(crate::size::parse)
+                .transpose()
+                .with_context(|| format!("invalid max_size for {repository}"))?;
             prefixes.push(RepositoryLocation {
                 prefix,
                 content_check: config.content_check.as_ref(),
+                max_size,
                 silence_checks: &config.silence_checks,
             });
         }
@@ -316,15 +326,35 @@ mod tests {
                 .is_empty()
         );
         let config = Config::parse(&format!(
-            "{base}silence_checks = ['folders', 'age', 'content']"
+            "{base}silence_checks = ['folders', 'age', 'content', 'size']"
         ))
         .unwrap();
         let buckets = config.buckets().unwrap();
         let active = crate::findings::selection::Selection::default()
             .without(buckets["bucket"][0].silence_checks);
-        assert!(!active.folders && !active.age && !active.content);
+        assert!(!active.folders && !active.age && !active.content && !active.size);
         for invalid in ["['unknown']", "['Age']", "'age'", "[1]"] {
             assert!(Config::parse(&format!("{base}silence_checks = {invalid}")).is_err());
+        }
+    }
+
+    /// Size limits are optional, parsed from human-readable values, and validated per repository.
+    #[test]
+    fn repository_max_size_is_parsed_and_validated() {
+        let base = format!("{PROVIDER}[[repositories]]\nuri = 's3://bucket/repo'\n");
+        let without = Config::parse(&base).unwrap();
+        assert_eq!(without.buckets().unwrap()["bucket"][0].max_size, None);
+
+        let config = Config::parse(&format!("{base}max_size = '2 GiB'")).unwrap();
+        assert_eq!(
+            config.buckets().unwrap()["bucket"][0].max_size,
+            Some(2 << 30)
+        );
+
+        for invalid in ["'0'", "'-1'", "'1.5GiB'", "'gib'", "''", "1024"] {
+            let error = Config::parse(&format!("{base}max_size = {invalid}")).unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains("max_size"), "{invalid}: {message}");
         }
     }
 }

@@ -13,6 +13,8 @@ fn one_evaluation_drives_tree_report_and_exit_code() {
     tree.at("repo").repository = Some(Repository {
         exists: true,
         newest: Some(now - TimeDelta::days(10)),
+        size: 0,
+        max_size: None,
         checked_files: 3,
         content_failures: 2,
         failure_samples: vec!["bad.gz: content does not match pattern".to_owned()],

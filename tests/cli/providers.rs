@@ -82,7 +82,7 @@ uri = 's3://test-bucket/repo'
 fn all_providers_have_independent_results_and_credentials() {
     for args in [vec!["check", "--all"], vec!["report", "--dry-run"]] {
         let contents = format!(
-            "<Contents><Key>repo/file</Key><LastModified>{}</LastModified></Contents>",
+            "<Contents><Key>repo/file</Key><LastModified>{}</LastModified><Size>0</Size></Contents>",
             chrono::Utc::now().to_rfc3339()
         );
         let (primary, primary_server) = server(&contents);
@@ -206,7 +206,7 @@ fn provider_failure_never_outputs_partial_results() {
 #[test]
 fn healthy_report_identifies_both_providers() {
     let contents = format!(
-        "<Contents><Key>repo/file</Key><LastModified>{}</LastModified></Contents>",
+        "<Contents><Key>repo/file</Key><LastModified>{}</LastModified><Size>0</Size></Contents>",
         chrono::Utc::now().to_rfc3339()
     );
     let (primary, primary_server) = server(&contents);

@@ -21,6 +21,9 @@ mod selection;
 /// Per-repository exclusions from execution and presentation.
 mod silencing;
 
+/// Repository byte totals, configured limits, and size display.
+mod size;
+
 use super::scan::MAX_FAILURE_SAMPLES;
 use super::*;
 use crate::{
@@ -50,6 +53,7 @@ impl Storage for TestStorage {
             Ok(FileEntry {
                 path: path.clone(),
                 modified: Utc::now(),
+                size: self.files[path].len() as u64,
             })
         }))))
     }

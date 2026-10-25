@@ -21,16 +21,19 @@ async fn silencing_is_local_and_skips_execution() {
         RepositoryLocation {
             prefix: "group/silent",
             content_check: Some(&content_check),
+            max_size: None,
             silence_checks: &[Kind::Folders, Kind::Age, Kind::Content],
         },
         RepositoryLocation {
             prefix: "group/active",
             content_check: None,
+            max_size: None,
             silence_checks: &[],
         },
         RepositoryLocation {
             prefix: "group/missing",
             content_check: None,
+            max_size: None,
             silence_checks: &[Kind::Folders],
         },
     ];
@@ -50,8 +53,8 @@ async fn silencing_is_local_and_skips_execution() {
 
     let now = Utc::now() + TimeDelta::days(8);
     let output = tree.render("s3://test", now, 7, true, checks);
-    assert!(output.contains("── silent (1 files)\n"));
-    assert!(output.contains("── missing (0 files)\n"));
+    assert!(output.contains("── silent (1 files, 0 B)\n"));
+    assert!(output.contains("── missing (0 files, 0 B)\n"));
     assert!(output.contains("\x1b[33mactive"));
 
     let issues = tree.issues("s3://test", now, 7, checks).join("\n");

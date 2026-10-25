@@ -19,6 +19,7 @@ impl Storage for MetadataStorage {
                 Ok(FileEntry {
                     path: (*path).to_owned(),
                     modified: *modified,
+                    size: 0,
                 })
             },
         ))))
@@ -32,6 +33,7 @@ async fn inspect_prefixes(storage: &dyn Storage, prefixes: &[String]) -> Result<
         .map(|prefix| RepositoryLocation {
             prefix,
             content_check: None,
+            max_size: None,
             silence_checks: &[],
         })
         .collect();

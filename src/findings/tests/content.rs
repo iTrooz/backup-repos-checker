@@ -25,6 +25,7 @@ async fn content_checks_are_recursive_and_skip_unmatched_files() {
     let repositories = [RepositoryLocation {
         prefix: "repo",
         content_check: Some(&content_check),
+        max_size: None,
         silence_checks: &[],
     }];
 
@@ -66,6 +67,7 @@ async fn unmatched_files_are_accepted_without_downloads() {
     let repositories = [RepositoryLocation {
         prefix: "repo",
         content_check: Some(&content_check),
+        max_size: None,
         silence_checks: &[],
     }];
     let checks = Selection::default();
@@ -91,6 +93,7 @@ async fn checks_every_file_but_bounds_failure_details() {
     let repositories = [RepositoryLocation {
         prefix: "",
         content_check: Some(&content_check),
+        max_size: None,
         silence_checks: &[],
     }];
 

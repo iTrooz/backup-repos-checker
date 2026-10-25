@@ -71,7 +71,11 @@ fn render_into(
         .collect::<String>();
     let collapsed = tree.repository.is_some() || unconfigured;
     if collapsed || tree.children.is_empty() {
-        detail.push_str(&format!(" ({} files)", tree.file_count));
+        detail.push_str(&format!(
+            " ({} files, {})",
+            tree.file_count,
+            crate::size::format(tree.size)
+        ));
     }
     output.push_str(indent);
     if let Some(last) = last {

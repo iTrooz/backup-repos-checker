@@ -4,6 +4,7 @@ mod check;
 mod config;
 mod findings;
 mod report;
+mod size;
 mod storage;
 
 use std::{
@@ -33,12 +34,12 @@ enum Command {
         /// Include informational check details, not only issues.
         #[arg(long, short = 'A')]
         all: bool,
-        /// Comma-separated checks to run: folders, age, content.
+        /// Comma-separated checks to run: folders, age, content, size.
         #[arg(
             long,
             value_enum,
             value_delimiter = ',',
-            default_value = "folders,age,content"
+            default_value = "folders,age,content,size"
         )]
         checks: Vec<Kind>,
     },

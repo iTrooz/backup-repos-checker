@@ -26,6 +26,7 @@ pub async fn inspect(
     // Seed configured paths so missing repositories still appear in the result.
     for repository in repositories {
         root.at(repository.prefix).repository = Some(Repository {
+            max_size: repository.max_size,
             silence_checks: repository.silence_checks.to_vec(),
             ..Repository::default()
         });
@@ -79,7 +80,7 @@ pub async fn inspect(
                 || entry.path.rsplit_once('/').map_or("", |(parent, _)| parent),
                 |repo| repo.prefix,
             );
-            root.count_file(folder);
+            root.count_file(folder, entry.size);
         }
 
         if let Some(repository) = repository {
@@ -90,6 +91,9 @@ pub async fn inspect(
                 .expect("configured repository");
 
             repo.exists = true;
+            if !marker {
+                repo.size += entry.size;
+            }
             if checked {
                 repo.checked_files += 1;
             }

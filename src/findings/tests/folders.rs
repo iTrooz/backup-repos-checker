@@ -26,11 +26,13 @@ async fn displayed_leaves_count_files_recursively() {
         RepositoryLocation {
             prefix: "group/repo",
             content_check: None,
+            max_size: None,
             silence_checks: &[],
         },
         RepositoryLocation {
             prefix: "group/missing",
             content_check: None,
+            max_size: None,
             silence_checks: &[],
         },
     ];
@@ -40,10 +42,10 @@ async fn displayed_leaves_count_files_recursively() {
 
     for color in [false, true] {
         let output = tree.render("s3://test", Utc::now(), 7, color, checks);
-        assert!(output.contains("repo  [folders: found] (2 files)"));
-        assert!(output.contains("missing  [folders: not found] (0 files)"));
-        assert!(output.contains("unknown  [folders: unconfigured] (3 files)"));
-        assert!(output.contains("empty  [folders: unconfigured] (0 files)"));
+        assert!(output.contains("repo  [folders: found] (2 files, 0 B)"));
+        assert!(output.contains("missing  [folders: not found] (0 files, 0 B)"));
+        assert!(output.contains("unknown  [folders: unconfigured] (3 files, 0 B)"));
+        assert!(output.contains("empty  [folders: unconfigured] (0 files, 0 B)"));
         assert!(!output.contains("group ("));
         assert!(!output.contains("deep"));
     }
@@ -51,13 +53,14 @@ async fn displayed_leaves_count_files_recursively() {
     let repositories = [RepositoryLocation {
         prefix: "",
         content_check: None,
+        max_size: None,
         silence_checks: &[],
     }];
 
     let tree = inspect(&storage, &repositories, checks).await.unwrap();
     assert_eq!(
         tree.render("s3://test", Utc::now(), 7, false, checks),
-        "s3://test  [folders: found] (5 files)\n"
+        "s3://test  [folders: found] (5 files, 0 B)\n"
     );
 }
 
@@ -76,6 +79,7 @@ async fn exact_object_and_similar_prefix_do_not_establish_existence() {
     let repositories = [RepositoryLocation {
         prefix: "repo",
         content_check: None,
+        max_size: None,
         silence_checks: &[],
     }];
     assert!(
@@ -110,6 +114,7 @@ async fn listing_errors_propagate() {
     let repositories = [RepositoryLocation {
         prefix: "repo",
         content_check: None,
+        max_size: None,
         silence_checks: &[],
     }];
 
@@ -137,11 +142,13 @@ async fn unconfigured_folders_hide_children_only_in_tree_output() {
         RepositoryLocation {
             prefix: "group/repo",
             content_check: None,
+            max_size: None,
             silence_checks: &[],
         },
         RepositoryLocation {
             prefix: "group/missing",
             content_check: None,
+            max_size: None,
             silence_checks: &[],
         },
     ];

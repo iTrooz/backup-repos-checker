@@ -10,6 +10,7 @@ pub enum Kind {
     Folders,
     Age,
     Content,
+    Size,
 }
 
 impl Kind {
@@ -19,6 +20,7 @@ impl Kind {
             Self::Folders => "folders",
             Self::Age => "age",
             Self::Content => "content",
+            Self::Size => "size",
         }
     }
 }
@@ -29,6 +31,7 @@ pub struct Selection {
     pub folders: bool,
     pub age: bool,
     pub content: bool,
+    pub size: bool,
 }
 
 impl Default for Selection {
@@ -38,6 +41,7 @@ impl Default for Selection {
             folders: true,
             age: true,
             content: true,
+            size: true,
         }
     }
 }
@@ -50,6 +54,7 @@ impl Selection {
                 Kind::Folders => self.folders = false,
                 Kind::Age => self.age = false,
                 Kind::Content => self.content = false,
+                Kind::Size => self.size = false,
             }
         }
 
@@ -62,6 +67,7 @@ impl Selection {
             folders: kinds.iter().any(|kind| matches!(kind, Kind::Folders)),
             age: kinds.iter().any(|kind| matches!(kind, Kind::Age)),
             content: kinds.iter().any(|kind| matches!(kind, Kind::Content)),
+            size: kinds.iter().any(|kind| matches!(kind, Kind::Size)),
         }
     }
 }

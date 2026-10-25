@@ -10,6 +10,7 @@ pub struct Folder {
     pub(crate) repository: Option<Repository>,
     pub(crate) children: BTreeMap<String, Folder>,
     pub(crate) file_count: usize,
+    pub(crate) size: u64,
 }
 
 impl Folder {
@@ -24,14 +25,16 @@ impl Folder {
         folder
     }
 
-    /// Count one object in its displayed folder and every ancestor, excluding markers.
-    pub(super) fn count_file(&mut self, path: &str) {
+    /// Count one object's files and bytes in its displayed folder and every ancestor.
+    pub(super) fn count_file(&mut self, path: &str, size: u64) {
         self.file_count += 1;
+        self.size += size;
         let mut folder = self;
 
         for component in path.split('/').filter(|part| !part.is_empty()) {
             folder = folder.children.entry(component.to_owned()).or_default();
             folder.file_count += 1;
+            folder.size += size;
         }
     }
 

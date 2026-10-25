@@ -93,7 +93,7 @@ const CONTENT_RULES: &str = "[[repositories.content_check.rules]]\nglob = '**'\n
 /// Run a recursive content check against a local S3 response sequence.
 fn check_content(status: u16, bytes: &[u8], args: &[&str], extra: &str) -> Output {
     let listing = format!(
-        "<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>repo/deep/file</Key><LastModified>{}</LastModified></Contents></ListBucketResult>",
+        "<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>repo/deep/file</Key><LastModified>{}</LastModified><Size>0</Size></Contents></ListBucketResult>",
         chrono::Utc::now().to_rfc3339(),
     );
     with_s3_responses(
@@ -128,7 +128,7 @@ const EMAIL: &str = "[email]\nsmtp_host = '127.0.0.1'\nsmtp_port = 1\nfrom = 'ba
 #[test]
 fn dry_run_previews_stale_and_unconfigured_entries_without_smtp() {
     let output = with_listing(
-        "<Contents><Key>repo/deep/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents><Contents><Key>untracked/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents>",
+        "<Contents><Key>repo/deep/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified><Size>0</Size></Contents><Contents><Key>untracked/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified><Size>0</Size></Contents>",
         &["report", "--dry-run"],
         EMAIL,
     );
@@ -155,7 +155,7 @@ fn dry_run_reports_missing_repositories_and_exits_one() {
 #[test]
 fn healthy_report_skips_smtp() {
     let contents = format!(
-        "<Contents><Key>repo/file</Key><LastModified>{}</LastModified></Contents>",
+        "<Contents><Key>repo/file</Key><LastModified>{}</LastModified><Size>0</Size></Contents>",
         chrono::Utc::now().to_rfc3339(),
     );
     let output = with_listing(&contents, &["report"], EMAIL);
@@ -173,12 +173,12 @@ fn healthy_flag_does_not_hide_problems() {
     for (contents, code, issue) in [
         ("", 1, ": folders: not found"),
         (
-            "<Contents><Key>repo/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents>",
+            "<Contents><Key>repo/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified><Size>0</Size></Contents>",
             0,
             ": age: latest is ",
         ),
         (
-            "<Contents><Key>repo/file</Key><LastModified>2100-01-01T00:00:00Z</LastModified></Contents><Contents><Key>unknown/file</Key><LastModified>2100-01-01T00:00:00Z</LastModified></Contents>",
+            "<Contents><Key>repo/file</Key><LastModified>2100-01-01T00:00:00Z</LastModified><Size>0</Size></Contents><Contents><Key>unknown/file</Key><LastModified>2100-01-01T00:00:00Z</LastModified><Size>0</Size></Contents>",
             0,
             ": folders: unconfigured",
         ),
@@ -200,7 +200,7 @@ fn healthy_flag_does_not_hide_problems() {
 #[test]
 fn healthy_report_attempts_smtp_delivery() {
     let contents = format!(
-        "<Contents><Key>repo/file</Key><LastModified>{}</LastModified></Contents>",
+        "<Contents><Key>repo/file</Key><LastModified>{}</LastModified><Size>0</Size></Contents>",
         chrono::Utc::now().to_rfc3339(),
     );
     let output = with_listing(&contents, &["report", "--send-even-if-healthy"], EMAIL);
@@ -230,7 +230,7 @@ fn healthy_flag_does_not_report_after_scan_errors() {
 #[test]
 fn report_uses_nested_age_threshold() {
     let contents = format!(
-        "<Contents><Key>repo/file</Key><LastModified>{}</LastModified></Contents>",
+        "<Contents><Key>repo/file</Key><LastModified>{}</LastModified><Size>0</Size></Contents>",
         (chrono::Utc::now() - chrono::TimeDelta::days(8)).to_rfc3339(),
     );
     let output = with_listing(
@@ -290,7 +290,7 @@ fn smtp_without_required_starttls_fails_without_sending() {
 #[test]
 fn stale_and_unconfigured_folders_exit_successfully() {
     let output = check_with_listing(
-        "<Contents><Key>repo/deep/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents><Contents><Key>untracked/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified></Contents>",
+        "<Contents><Key>repo/deep/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified><Size>0</Size></Contents><Contents><Key>untracked/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified><Size>0</Size></Contents>",
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let stdout = String::from_utf8(output.stdout).unwrap();
@@ -309,6 +309,30 @@ fn missing_repositories_exit_one() {
             .unwrap()
             .contains("repo  [folders: not found]")
     );
+}
+
+/// Per-repository size limits fail the run, while measured sizes remain visible when silenced.
+#[test]
+fn repository_size_limit_fails_and_sizes_are_always_shown() {
+    let contents = "<Contents><Key>repo/file</Key><LastModified>2100-01-01T00:00:00Z</LastModified><Size>2048</Size></Contents>";
+    let output = with_listing(contents, &["check"], "max_size = '1KiB'");
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("[size: 2 KiB exceeds limit 1 KiB]"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("(1 files, 2 KiB)"), "{stdout}");
+
+    let output = with_listing(
+        contents,
+        &["check"],
+        "max_size = '1KiB'\nsilence_checks = ['size']",
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(!stdout.contains("[size:"), "{stdout}");
+    assert!(stdout.contains("(1 files, 2 KiB)"), "{stdout}");
 }
 
 /// Selected content checks still download and validate file prefixes.

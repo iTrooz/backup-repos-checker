@@ -24,6 +24,7 @@ impl ProviderConfig {
 pub struct FileEntry {
     pub path: String,
     pub modified: DateTime<Utc>,
+    pub size: u64,
 }
 
 /// Implementations recursively stream all files, including directory markers.
@@ -148,7 +149,13 @@ impl Storage for S3Storage {
                     let modified =
                         DateTime::from_timestamp(modified.secs(), modified.subsec_nanos())
                             .context("S3 object has invalid LastModified")?;
-                    Ok(FileEntry { path, modified })
+                    let size = object.size().context("S3 object omitted Size")?;
+                    anyhow::ensure!(size >= 0, "S3 object has negative Size");
+                    Ok(FileEntry {
+                        path,
+                        modified,
+                        size: size as u64,
+                    })
                 })
                 .collect::<Result<Vec<_>>>()?;
             Ok(Some((entries, next)))
@@ -287,6 +294,8 @@ mod tests {
             assert_eq!(entries.len(), 2);
             assert_eq!(entries[0].path, "repo/");
             assert_eq!(entries[1].path, "repo/deep/file");
+            assert_eq!(entries[0].size, 0);
+            assert_eq!(entries[1].size, 42);
             assert!(entries[1].modified > entries[0].modified);
             let requests = server.await.unwrap();
             let target = requests[0].split_whitespace().nth(1).unwrap();
