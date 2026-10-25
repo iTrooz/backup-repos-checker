@@ -1,6 +1,7 @@
 //! Parse configured byte limits and format measured sizes for display.
 
 use anyhow::{Result, bail, ensure};
+use serde::Deserialize;
 
 /// Binary units accepted in configuration, paired with their display spelling.
 const UNITS: [(&str, u64); 6] = [
@@ -11,6 +12,20 @@ const UNITS: [(&str, u64); 6] = [
     ("TiB", 1 << 40),
     ("PiB", 1 << 50),
 ];
+
+/// Configured byte limit, parsed while configuration is loaded.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(try_from = "String")]
+pub struct Limit(pub u64);
+
+impl TryFrom<String> for Limit {
+    type Error = anyhow::Error;
+
+    /// Reject malformed or zero limits as soon as the configuration is deserialized.
+    fn try_from(text: String) -> Result<Self> {
+        parse(&text).map(Self)
+    }
+}
 
 /// Parse an integer byte count with an optional binary unit, such as "100GiB".
 pub fn parse(text: &str) -> Result<u64> {
@@ -35,7 +50,10 @@ pub fn parse(text: &str) -> Result<u64> {
     } else {
         UNITS
             .iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case(unit))
+            .find(|(name, _)| {
+                name.eq_ignore_ascii_case(unit)
+                    || (unit.len() == 1 && name[..1].eq_ignore_ascii_case(unit))
+            })
             .map(|(_, multiplier)| *multiplier)
             .ok_or_else(|| anyhow::anyhow!("unknown size unit in {text:?}"))?
     };
@@ -78,7 +96,9 @@ mod tests {
         assert_eq!(parse("1024").unwrap(), 1024);
         assert_eq!(parse(" 2 MiB ").unwrap(), 2 << 20);
         assert_eq!(parse("1gib").unwrap(), 1 << 30);
+        assert_eq!(parse("1G").unwrap(), 1 << 30);
         assert_eq!(parse("3 TIB").unwrap(), 3 << 40);
+        assert_eq!(parse("2m").unwrap(), 2 << 20);
     }
 
     #[test]

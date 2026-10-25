@@ -18,13 +18,13 @@ secret_access_key_env = "MIRROR_SECRET_ACCESS_KEY"
 [checks.age]
 max_age_days = 7
 
+[checks.size]
+max_size = "1G"
+
 [[repositories]]
 uri = "s3://bucket-one/backups/server-a"
-# Optional: fail when this repository exceeds the given total size.
-# The value is a whole number with a binary unit: B, KiB, MiB, GiB, TiB, or PiB.
 # max_size = "100GiB"
 # Optional: disable these checks for this repository in check and report.
-# Valid names: "folders", "age", "content", "size". Omit or use [] to keep all checks.
 silence_checks = []
 
 [[repositories]]

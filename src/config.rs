@@ -68,6 +68,7 @@ impl ProviderConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct ChecksConfig {
     pub age: AgeCheckConfig,
+    pub size: Option<SizeCheckConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,14 +83,21 @@ impl Default for AgeCheckConfig {
     }
 }
 
+/// Global maximum repository size, overridable per repository.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SizeCheckConfig {
+    pub max_size: crate::size::Limit,
+}
+
 /// Repository location, content rules, and checks explicitly disabled for this repository.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RepositoryConfig {
     pub uri: String,
     pub content_check: Option<crate::findings::content::ContentCheck>,
-    /// Optional maximum total size, such as "100GiB".
-    pub max_size: Option<String>,
+    /// Optional maximum total size overriding the global [checks.size] limit.
+    pub max_size: Option<crate::size::Limit>,
     #[serde(default)]
     pub silence_checks: Vec<crate::findings::selection::Kind>,
 }
@@ -137,6 +145,7 @@ impl Config {
     /// Bucket names mapped to normalized repository prefixes (empty means bucket root).
     pub fn buckets(&self) -> Result<BTreeMap<String, Vec<RepositoryLocation<'_>>>> {
         let mut buckets: BTreeMap<String, Vec<RepositoryLocation<'_>>> = BTreeMap::new();
+        let global_max_size = self.checks.size.as_ref().map(|size| size.max_size.0);
         for config in &self.repositories {
             let repository = &config.uri;
             let Some(rest) = repository.strip_prefix("s3://") else {
@@ -168,10 +177,7 @@ impl Config {
             }
             let max_size = config
                 .max_size
-                .as_deref()
-                .map(crate::size::parse)
-                .transpose()
-                .with_context(|| format!("invalid max_size for {repository}"))?;
+                .map_or(global_max_size, |limit| Some(limit.0));
             prefixes.push(RepositoryLocation {
                 prefix,
                 content_check: config.content_check.as_ref(),
@@ -355,6 +361,37 @@ mod tests {
             let error = Config::parse(&format!("{base}max_size = {invalid}")).unwrap_err();
             let message = format!("{error:#}");
             assert!(message.contains("max_size"), "{invalid}: {message}");
+        }
+    }
+
+    /// A global limit applies to every repository unless that repository overrides it.
+    #[test]
+    fn global_size_limit_is_a_per_repository_fallback() {
+        let base = format!("{PROVIDER}[checks.size]\nmax_size = '1G'\n");
+        for (repository, expected) in [
+            (
+                "[[repositories]]\nuri = 's3://bucket/repo'\n",
+                Some(1 << 30),
+            ),
+            (
+                "[[repositories]]\nuri = 's3://bucket/repo'\nmax_size = '2GiB'\n",
+                Some(2 << 30),
+            ),
+        ] {
+            let config = Config::parse(&format!("{base}{repository}")).unwrap();
+            assert_eq!(config.buckets().unwrap()["bucket"][0].max_size, expected);
+        }
+
+        let repository = "[[repositories]]\nuri = 's3://bucket/repo'\n";
+        for invalid in [
+            "[checks.size]\n",
+            "[checks.size]\nmax_size = '0'\n",
+            "[checks.size]\nunknown = 1\n",
+        ] {
+            assert!(
+                Config::parse(&format!("{PROVIDER}{repository}{invalid}")).is_err(),
+                "{invalid}"
+            );
         }
     }
 }
