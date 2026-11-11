@@ -1,5 +1,6 @@
 services:
   backup-repos-checker:
+    container_name: backup-repos-checker
     build:
       context: .
       dockerfile: Dockerfile
