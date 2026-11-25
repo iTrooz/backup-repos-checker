@@ -79,7 +79,7 @@ impl Finding {
     }
 }
 
-/// Evaluate every configured repository and unconfigured folder once for both commands.
+/// Evaluate configured repositories and the roots of unconfigured branches for both commands.
 pub fn findings(
     tree: &Folder,
     uri: &str,
@@ -120,9 +120,9 @@ fn collect(
             "unconfigured".to_owned(),
             false,
         ));
+        return;
     }
 
-    // Report descendants even when their parent will be collapsed in the displayed tree.
     for (name, child) in &tree.children {
         collect(child, &format!("{uri}/{name}"), cutoff, checks, results);
     }

@@ -128,15 +128,17 @@ const EMAIL: &str = "[email]\nsmtp_host = '127.0.0.1'\nsmtp_port = 1\nfrom = 'ba
 #[test]
 fn dry_run_previews_stale_and_unconfigured_entries_without_smtp() {
     let output = with_listing(
-        "<Contents><Key>repo/deep/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified><Size>0</Size></Contents><Contents><Key>untracked/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified><Size>0</Size></Contents>",
+        "<Contents><Key>repo/deep/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified><Size>0</Size></Contents><Contents><Key>untracked/nested/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified><Size>0</Size></Contents>",
         &["report", "--dry-run"],
         EMAIL,
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("To: ops@example.com"));
+    assert!(stdout.contains("2 problematic entries"));
     assert!(stdout.contains("s3://test-bucket/repo: age: latest is 2000-01-01T00:00:00"));
     assert!(stdout.contains("s3://test-bucket/untracked: folders: unconfigured"));
+    assert!(!stdout.contains("untracked/nested"));
     assert!(!stdout.contains("deep"));
     assert!(!stdout.contains('\x1b'));
 }

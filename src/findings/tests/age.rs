@@ -77,7 +77,7 @@ async fn recursive_freshness_and_tree_colors() {
     );
 
     let issues = tree.issues("s3://test", now, 7, Selection::default());
-    assert_eq!(issues.len(), 5);
+    assert_eq!(issues.len(), 4);
     assert!(
         issues
             .iter()
@@ -86,7 +86,7 @@ async fn recursive_freshness_and_tree_colors() {
     assert!(
         issues
             .iter()
-            .any(|issue| issue == "s3://test/untracked/child: folders: unconfigured")
+            .any(|issue| issue == "s3://test/untracked: folders: unconfigured")
     );
     assert!(
         issues

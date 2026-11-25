@@ -125,9 +125,9 @@ async fn listing_errors_propagate() {
     );
 }
 
-/// Collapse unconfigured branches without hiding configured groups or altering reports.
+/// Collapse unconfigured branches in both outputs without hiding configured repositories.
 #[tokio::test]
-async fn unconfigured_folders_hide_children_only_in_tree_output() {
+async fn unconfigured_folders_hide_children_in_tree_and_report() {
     let storage = TestStorage {
         files: [
             ("group/repo/private/file".to_owned(), vec![]),
@@ -181,15 +181,12 @@ async fn unconfigured_folders_hide_children_only_in_tree_output() {
             .contains_key("nested")
     );
 
-    let issues = tree.issues("s3://test", Utc::now(), 7, checks);
-    assert!(
-        issues
-            .iter()
-            .any(|issue| issue == "s3://test/group/unconfigured/deep: folders: unconfigured")
-    );
-    assert!(
-        issues
-            .iter()
-            .any(|issue| issue == "s3://test/root-unconfigured/nested: folders: unconfigured")
+    assert_eq!(
+        tree.issues("s3://test", Utc::now(), 7, checks),
+        [
+            "s3://test/group/missing: folders: not found",
+            "s3://test/group/unconfigured: folders: unconfigured",
+            "s3://test/root-unconfigured: folders: unconfigured",
+        ]
     );
 }
