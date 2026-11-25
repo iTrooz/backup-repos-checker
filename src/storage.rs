@@ -4,9 +4,10 @@ use aws_sdk_s3::{
     Client,
     config::{BehaviorVersion, Credentials, Region},
 };
+use aws_smithy_http_client::tls::{Provider, rustls_provider::CryptoMode};
 use chrono::{DateTime, Utc};
-use futures::stream::BoxStream;
-use futures::{StreamExt, stream};
+use futures_util::stream::BoxStream;
+use futures_util::{StreamExt, stream};
 use tokio::io::AsyncReadExt;
 
 use crate::config::{ProviderConfig, S3Config};
@@ -41,6 +42,16 @@ pub struct S3Storage {
     bucket: String,
 }
 
+/// Use the same TLS crypto backend for S3 and SMTP.
+fn s3_client_config() -> aws_sdk_s3::config::Builder {
+    let http_client = aws_smithy_http_client::Builder::new()
+        .tls_provider(Provider::Rustls(CryptoMode::Ring))
+        .build_https();
+    aws_sdk_s3::config::Builder::new()
+        .behavior_version(BehaviorVersion::latest())
+        .http_client(http_client)
+}
+
 impl S3Storage {
     /// Build an S3 client using this provider's endpoint and credential environment.
     pub fn new(config: &S3Config, bucket: &str) -> Result<Self> {
@@ -60,8 +71,7 @@ impl S3Storage {
             .filter(|token| !token.is_empty());
         let credentials =
             Credentials::new(access_key, secret_key, session_token, None, "environment");
-        let sdk_config = aws_sdk_s3::config::Builder::new()
-            .behavior_version(BehaviorVersion::latest())
+        let sdk_config = s3_client_config()
             .region(Region::new(config.region.clone()))
             .endpoint_url(&config.endpoint)
             .credentials_provider(credentials)
@@ -172,7 +182,7 @@ impl Storage for S3Storage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::TryStreamExt;
+    use futures_util::TryStreamExt;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -219,8 +229,7 @@ mod tests {
             }
             requests
         });
-        let config = aws_sdk_s3::config::Builder::new()
-            .behavior_version(BehaviorVersion::latest())
+        let config = s3_client_config()
             .endpoint_url(endpoint)
             .region(Region::new("us-east-1"))
             .credentials_provider(Credentials::new("test", "test", None, None, "test"))

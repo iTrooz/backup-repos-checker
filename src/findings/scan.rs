@@ -1,7 +1,7 @@
 //! Stream bucket inventories and collect repository measurements without evaluating issues.
 
 use anyhow::Result;
-use futures::{StreamExt, TryStreamExt};
+use futures_util::{StreamExt, TryStreamExt};
 
 use super::{Folder, Repository, selection::Selection};
 use crate::{

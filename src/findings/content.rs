@@ -104,7 +104,7 @@ mod tests {
     use super::*;
     use crate::storage::FileEntry;
     use async_trait::async_trait;
-    use futures::stream::BoxStream;
+    use futures_util::stream::BoxStream;
 
     /// A file-prefix fixture that does not require an object listing.
     struct Bytes(Vec<u8>);

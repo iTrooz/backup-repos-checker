@@ -35,7 +35,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use evaluation::EvaluateFixture;
-use futures::{stream, stream::BoxStream};
+use futures_util::{stream, stream::BoxStream};
 use std::collections::BTreeMap;
 
 /// In-memory files with observable reads and optional access failures.
