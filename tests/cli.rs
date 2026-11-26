@@ -43,8 +43,9 @@ fn check_with_listing(contents: &str) -> Output {
 }
 
 fn with_listing(contents: &str, args: &[&str], extra_config: &str) -> Output {
-    let body =
-        format!("<ListBucketResult><IsTruncated>false</IsTruncated>{contents}</ListBucketResult>");
+    let body = format!(
+        "<ListBucketResult><Name>test-bucket</Name><IsTruncated>false</IsTruncated>{contents}</ListBucketResult>"
+    );
     with_s3_responses(vec![(200, body.into_bytes())], args, extra_config)
 }
 
@@ -93,7 +94,7 @@ const CONTENT_RULES: &str = "[[repositories.content_check.rules]]\nglob = '**'\n
 /// Run a recursive content check against a local S3 response sequence.
 fn check_content(status: u16, bytes: &[u8], args: &[&str], extra: &str) -> Output {
     let listing = format!(
-        "<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>repo/deep/file</Key><LastModified>{}</LastModified><Size>0</Size></Contents></ListBucketResult>",
+        "<ListBucketResult><Name>test-bucket</Name><IsTruncated>false</IsTruncated><Contents><Key>repo/deep/file</Key><LastModified>{}</LastModified><Size>0</Size></Contents></ListBucketResult>",
         chrono::Utc::now().to_rfc3339(),
     );
     with_s3_responses(
@@ -220,7 +221,7 @@ fn healthy_flag_does_not_report_after_scan_errors() {
     let output = with_s3_responses(
         vec![(
             200,
-            b"<ListBucketResult><IsTruncated>true</IsTruncated></ListBucketResult>".to_vec(),
+            b"<ListBucketResult><Name>test-bucket</Name><IsTruncated>true</IsTruncated></ListBucketResult>".to_vec(),
         )],
         &["report", "--send-even-if-healthy", "--dry-run"],
         EMAIL,

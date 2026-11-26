@@ -20,8 +20,9 @@ fn server(contents: &str) -> (String, JoinHandle<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
-    let body =
-        format!("<ListBucketResult><IsTruncated>false</IsTruncated>{contents}</ListBucketResult>");
+    let body = format!(
+        "<ListBucketResult><Name>test-bucket</Name><IsTruncated>false</IsTruncated>{contents}</ListBucketResult>"
+    );
     let handle = thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut socket = loop {

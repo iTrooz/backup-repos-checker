@@ -1,14 +1,14 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use aws_sdk_s3::{
-    Client,
-    config::{BehaviorVersion, Credentials, Region},
-};
-use aws_smithy_http_client::tls::{Provider, rustls_provider::CryptoMode};
 use chrono::{DateTime, Utc};
 use futures_util::stream::BoxStream;
 use futures_util::{StreamExt, stream};
-use tokio::io::AsyncReadExt;
+use s3::{
+    Bucket, Region,
+    command::Command,
+    creds::Credentials,
+    request::{Request, tokio_backend::ReqwestRequest},
+};
 
 use crate::config::{ProviderConfig, S3Config};
 
@@ -38,18 +38,7 @@ pub trait Storage: Send + Sync {
 }
 
 pub struct S3Storage {
-    client: Client,
-    bucket: String,
-}
-
-/// Use the same TLS crypto backend for S3 and SMTP.
-fn s3_client_config() -> aws_sdk_s3::config::Builder {
-    let http_client = aws_smithy_http_client::Builder::new()
-        .tls_provider(Provider::Rustls(CryptoMode::Ring))
-        .build_https();
-    aws_sdk_s3::config::Builder::new()
-        .behavior_version(BehaviorVersion::latest())
-        .http_client(http_client)
+    bucket: Box<Bucket>,
 }
 
 impl S3Storage {
@@ -69,18 +58,31 @@ impl S3Storage {
             .map(|name| std::env::var(name).with_context(|| format!("{name} must be set")))
             .transpose()?
             .filter(|token| !token.is_empty());
-        let credentials =
-            Credentials::new(access_key, secret_key, session_token, None, "environment");
-        let sdk_config = s3_client_config()
-            .region(Region::new(config.region.clone()))
-            .endpoint_url(&config.endpoint)
-            .credentials_provider(credentials)
-            .force_path_style(true)
-            .build();
-        Ok(Self {
-            client: Client::from_conf(sdk_config),
-            bucket: bucket.to_owned(),
-        })
+        let credentials = Credentials::new(
+            Some(&access_key),
+            Some(&secret_key),
+            None,
+            session_token.as_deref(),
+            None,
+        )?;
+        Self::connect(bucket, &config.endpoint, &config.region, credentials)
+    }
+
+    /// Use path-style addressing for both AWS and compatible endpoints.
+    fn connect(
+        bucket: &str,
+        endpoint: &str,
+        region: &str,
+        credentials: Credentials,
+    ) -> Result<Self> {
+        let region = Region::Custom {
+            region: region.to_owned(),
+            endpoint: endpoint.trim_end_matches('/').to_owned(),
+        };
+        let mut bucket =
+            Bucket::new(bucket, region, credentials).context("cannot build S3 client")?;
+        bucket.set_path_style();
+        Ok(Self { bucket })
     }
 }
 
@@ -90,34 +92,44 @@ impl Storage for S3Storage {
         if length == 0 {
             return Ok(Vec::new());
         }
-        let response = self
-            .client
-            .get_object()
-            .bucket(&self.bucket)
-            .key(path)
-            .range(format!("bytes=0-{}", length - 1))
-            .send()
-            .await;
-        let response = match response {
-            Ok(response) => response,
-            // A range starting at byte zero is unsatisfiable only for an empty object.
-            Err(error)
-                if error
-                    .raw_response()
-                    .is_some_and(|response| response.status().as_u16() == 416) =>
-            {
-                return Ok(Vec::new());
-            }
-            Err(error) => return Err(error).context("S3 GetObject failed"),
-        };
-        let mut bytes = Vec::with_capacity(length);
-        response
-            .body
-            .into_async_read()
-            .take(length as u64)
-            .read_to_end(&mut bytes)
+        // The client's URL parser normalizes dot segments rather than requesting them verbatim.
+        anyhow::ensure!(
+            !path.split('/').any(|segment| matches!(segment, "." | "..")),
+            "cannot read S3 key with a dot path segment: {path:?}"
+        );
+        // rust-s3 consumes the first slash; add it separately from the key.
+        let path = format!("/{path}");
+        let request = ReqwestRequest::new(
+            &self.bucket,
+            &path,
+            Command::GetObjectRange {
+                start: 0,
+                end: Some(length as u64 - 1),
+            },
+        )
+        .await
+        .context("cannot prepare S3 GetObject")?;
+        let mut response = request
+            .response_data_to_stream()
             .await
-            .context("cannot read S3 response body")?;
+            .context("S3 GetObject failed")?;
+        // A range starting at byte zero is unsatisfiable only for an empty object.
+        if response.status_code == 416 {
+            return Ok(Vec::new());
+        }
+        anyhow::ensure!(
+            (200..300).contains(&response.status_code),
+            "S3 GetObject failed: HTTP {}",
+            response.status_code
+        );
+        let mut bytes = Vec::with_capacity(length);
+        while bytes.len() < length {
+            let Some(chunk) = response.bytes.next().await else {
+                break;
+            };
+            let chunk = chunk.context("cannot read S3 response body")?;
+            bytes.extend_from_slice(&chunk[..chunk.len().min(length - bytes.len())]);
+        }
         Ok(bytes)
     }
 
@@ -127,44 +139,36 @@ impl Storage for S3Storage {
             let Some(token) = state else {
                 return Ok::<_, anyhow::Error>(None);
             };
-            let page = self
-                .client
-                .list_objects_v2()
-                .bucket(&self.bucket)
-                .set_continuation_token(token.clone())
-                .send()
+            let (page, status) = self
+                .bucket
+                .list_page(String::new(), None, token.clone(), None, None)
                 .await
                 .context("S3 ListObjectsV2 failed")?;
-            let next = if page.is_truncated() == Some(true) {
+            anyhow::ensure!(status == 200, "S3 ListObjectsV2 failed: HTTP {status}");
+            let next = if page.is_truncated {
                 let next = page
-                    .next_continuation_token()
+                    .next_continuation_token
                     .filter(|next| !next.is_empty())
                     .context("truncated S3 listing omitted continuation token")?;
                 anyhow::ensure!(
-                    Some(next) != token.as_deref(),
+                    Some(next.as_str()) != token.as_deref(),
                     "S3 listing repeated continuation token"
                 );
-                Some(Some(next.to_owned()))
+                Some(Some(next))
             } else {
                 None
             };
             let entries = page
-                .contents()
-                .iter()
+                .contents
+                .into_iter()
                 .map(|object| {
-                    let path = object.key().context("S3 object omitted key")?.to_owned();
-                    let modified = object
-                        .last_modified()
-                        .context("S3 object omitted LastModified")?;
-                    let modified =
-                        DateTime::from_timestamp(modified.secs(), modified.subsec_nanos())
-                            .context("S3 object has invalid LastModified")?;
-                    let size = object.size().context("S3 object omitted Size")?;
-                    anyhow::ensure!(size >= 0, "S3 object has negative Size");
+                    let modified = DateTime::parse_from_rfc3339(&object.last_modified)
+                        .context("S3 object has invalid LastModified")?
+                        .with_timezone(&Utc);
                     Ok(FileEntry {
-                        path,
+                        path: object.key,
                         modified,
-                        size: size as u64,
+                        size: object.size,
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -229,19 +233,10 @@ mod tests {
             }
             requests
         });
-        let config = s3_client_config()
-            .endpoint_url(endpoint)
-            .region(Region::new("us-east-1"))
-            .credentials_provider(Credentials::new("test", "test", None, None, "test"))
-            .force_path_style(true)
-            .build();
-        (
-            S3Storage {
-                client: Client::from_conf(config),
-                bucket: "test-bucket".into(),
-            },
-            server,
-        )
+        let credentials = Credentials::new(Some("test"), Some("test"), None, None, None).unwrap();
+        let storage =
+            S3Storage::connect("test-bucket", &endpoint, "us-east-1", credentials).unwrap();
+        (storage, server)
     }
 
     #[tokio::test]
@@ -292,12 +287,47 @@ mod tests {
         .unwrap();
     }
 
+    /// Listing keys must round-trip through the signed GET request without normalization.
+    #[tokio::test]
+    async fn special_object_keys_round_trip() {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let page = b"<ListBucketResult><Name>test-bucket</Name><IsTruncated>false</IsTruncated><Contents><Key>/repo//file +%?#&amp;.txt</Key><LastModified>2026-01-01T00:00:00Z</LastModified><Size>4</Size></Contents></ListBucketResult>";
+            let (storage, server) =
+                mock_responses(vec![response("200 OK", page), response("206 Partial Content", b"data")])
+                    .await;
+            let entries: Vec<_> = storage.list().await.unwrap().try_collect().await.unwrap();
+            assert_eq!(entries[0].path, "/repo//file +%?#&.txt");
+            assert_eq!(storage.read_prefix(&entries[0].path, 4).await.unwrap(), b"data");
+            let requests = server.await.unwrap();
+            assert_eq!(
+                requests[1]
+                    .split_whitespace()
+                    .nth(1)
+                    .and_then(|target| target.split('?').next()),
+                Some("/test-bucket//repo//file%20%2B%25%3F%23%26.txt")
+            );
+        })
+        .await
+        .unwrap();
+    }
+
+    /// Do not check the wrong object when the HTTP client would rewrite the key.
+    #[tokio::test]
+    async fn dot_segments_are_rejected_before_sending() {
+        let (storage, server) = mock_responses(Vec::new()).await;
+        assert!(server.await.unwrap().is_empty());
+        for key in ["repo/./file", "repo/nested/../file"] {
+            let error = storage.read_prefix(key, 4).await.unwrap_err();
+            assert!(error.to_string().contains("dot path segment"));
+        }
+    }
+
     #[tokio::test]
     async fn paginates_and_preserves_directory_markers() {
         tokio::time::timeout(std::time::Duration::from_secs(10), async {
             let (storage, server) = mock_s3(vec![
-                "<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>page-two</NextContinuationToken><Contents><Key>repo/</Key><LastModified>2026-01-01T00:00:00Z</LastModified><Size>0</Size></Contents></ListBucketResult>".into(),
-                "<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>repo/deep/file</Key><LastModified>2026-01-02T00:00:00Z</LastModified><Size>42</Size></Contents></ListBucketResult>".into(),
+                "<ListBucketResult><Name>test-bucket</Name><IsTruncated>true</IsTruncated><NextContinuationToken>page-two</NextContinuationToken><Contents><Key>repo/</Key><LastModified>2026-01-01T00:00:00Z</LastModified><Size>0</Size></Contents></ListBucketResult>".into(),
+                "<ListBucketResult><Name>test-bucket</Name><IsTruncated>false</IsTruncated><Contents><Key>repo/deep/file</Key><LastModified>2026-01-02T00:00:00Z</LastModified><Size>42</Size></Contents></ListBucketResult>".into(),
             ]).await;
             let entries: Vec<_> = storage.list().await.unwrap().try_collect().await.unwrap();
             assert_eq!(entries.len(), 2);
@@ -319,7 +349,7 @@ mod tests {
     async fn truncated_listing_requires_a_continuation_token() {
         tokio::time::timeout(std::time::Duration::from_secs(10), async {
             let (storage, server) = mock_s3(vec![
-                "<ListBucketResult><IsTruncated>true</IsTruncated></ListBucketResult>".into(),
+                "<ListBucketResult><Name>test-bucket</Name><IsTruncated>true</IsTruncated></ListBucketResult>".into(),
             ])
             .await;
             let entries: Result<Vec<_>> = storage.list().await.unwrap().try_collect().await;
@@ -330,6 +360,25 @@ mod tests {
                     .contains("continuation token")
             );
             server.await.unwrap();
+        })
+        .await
+        .unwrap();
+    }
+
+    /// A broken endpoint must not make the checker loop over the same listing page.
+    #[tokio::test]
+    async fn repeated_continuation_token_is_rejected() {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let page = "<ListBucketResult><Name>test-bucket</Name><IsTruncated>true</IsTruncated><NextContinuationToken>same</NextContinuationToken></ListBucketResult>";
+            let (storage, server) = mock_s3(vec![page.to_owned(), page.to_owned()]).await;
+            let entries: Result<Vec<_>> = storage.list().await.unwrap().try_collect().await;
+            assert!(
+                entries
+                    .unwrap_err()
+                    .to_string()
+                    .contains("repeated continuation token")
+            );
+            assert_eq!(server.await.unwrap().len(), 2);
         })
         .await
         .unwrap();

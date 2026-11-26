@@ -5,7 +5,7 @@ use super::*;
 /// Both commands expose identical age/content messages and the same failure exit code.
 #[test]
 fn check_and_report_use_the_same_findings() {
-    let listing = b"<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>repo/deep/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified><Size>0</Size></Contents></ListBucketResult>";
+    let listing = b"<ListBucketResult><Name>test-bucket</Name><IsTruncated>false</IsTruncated><Contents><Key>repo/deep/file</Key><LastModified>2000-01-01T00:00:00Z</LastModified><Size>0</Size></Contents></ListBucketResult>";
     let mut outputs = Vec::new();
     for args in [vec!["check"], vec!["report", "--dry-run"]] {
         let output = with_s3_responses(
